@@ -14,6 +14,7 @@ import clsx from 'clsx'
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry'
 import { useCanvasStore } from '../store/canvasStore'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
+import { EditableTitle } from './EditableTitle'
 import type { TerminalNodeData } from '../../shared/types'
 
 const TERMINAL_THEME = {
@@ -60,6 +61,7 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
 
   const [fullscreen, setFullscreen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [renaming, setRenaming] = useState(false)
   const [status, setStatus] = useState<'starting' | 'ready' | 'dead'>('starting')
   const [forking, setForking] = useState(false)
 
@@ -276,6 +278,12 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
       onSelect: () => setFullscreen((v) => !v)
     },
     {
+      id: 'rename',
+      label: 'Rename…',
+      icon: '✎',
+      onSelect: () => setRenaming(true)
+    },
+    {
       id: 'fork',
       label: 'Fork from here',
       icon: '⑂',
@@ -327,7 +335,13 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
         <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-0 !bg-canvas-accent/70" />
 
         <div className="terminal-node__header flex select-none items-center gap-2 border-b border-canvas-border bg-canvas-node px-2.5 py-1.5">
-          <span className="text-sm font-medium text-gray-100">{data.title}</span>
+          <EditableTitle
+            value={data.title}
+            editing={renaming}
+            onEditingChange={setRenaming}
+            onCommit={(t) => updateNodeData(id, { title: t })}
+            className="text-sm font-medium text-gray-100"
+          />
           {data.mode === 'opencode' && (
             <span className="rounded bg-canvas-accent/20 px-1.5 py-0.5 text-[10px] font-semibold text-canvas-accent">
               opencode

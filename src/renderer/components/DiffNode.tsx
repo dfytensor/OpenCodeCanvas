@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import clsx from 'clsx'
 import { useCanvasStore } from '../store/canvasStore'
+import { EditableTitle } from './EditableTitle'
 import type { DiffNodeData, ForkWorkspace, TerminalNodeData } from '../../shared/types'
 
 type DiffNode = Node<DiffNodeData, 'diff'>
@@ -19,6 +20,7 @@ export function DiffNode({ id, data }: NodeProps<DiffNode>): React.ReactElement 
   const updateNodeData = useCanvasStore((s) => s.updateNodeData)
   const removeNode = useCanvasStore((s) => s.removeNode)
   const [loading, setLoading] = useState(false)
+  const [renaming, setRenaming] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     const d = findSourceData(data.sourceNodeId)
@@ -72,7 +74,14 @@ export function DiffNode({ id, data }: NodeProps<DiffNode>): React.ReactElement 
       <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-0 !bg-canvas-accent/70" />
 
       <div className="terminal-node__header flex select-none items-center gap-2 border-b border-canvas-border bg-canvas-node px-2.5 py-1.5">
-        <span className="text-sm font-medium text-gray-100">⌗ {data.title}</span>
+        <EditableTitle
+          value={data.title}
+          editing={renaming}
+          onEditingChange={setRenaming}
+          onCommit={(t) => updateNodeData(id, { title: t })}
+          prefix="⌗"
+          className="text-sm font-medium text-gray-100"
+        />
         <div className="flex-1" />
         <button
           onClick={() => void load()}
