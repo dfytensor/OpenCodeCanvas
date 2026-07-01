@@ -1,7 +1,7 @@
 // Shared types between main/preload/renderer
 
 export type TerminalMode = 'shell' | 'opencode'
-export type NodeKind = 'main' | 'fork'
+export type NodeKind = 'main' | 'fork' | 'merge'
 
 export interface TerminalNodeData {
   sessionId: string
@@ -9,6 +9,8 @@ export interface TerminalNodeData {
   kind: NodeKind
   forkFrom?: string
   forkParentSession?: string
+  // merge lineage: the node ids of the branches this node merged together
+  mergeFrom?: string[]
   cwd: string
   title: string
   ptyId: string
@@ -85,6 +87,7 @@ export interface ElectronAPI {
   }
   workspace: {
     prepare: (projectDir: string, nodeId: string) => Promise<ForkWorkspace>
+    prepareMerge: (sources: ForkWorkspace[], nodeId: string) => Promise<ForkWorkspace>
     diff: (ws: ForkWorkspace) => Promise<string>
     apply: (ws: ForkWorkspace) => Promise<{ ok: boolean; message: string }>
     remove: (ws: ForkWorkspace) => Promise<void>

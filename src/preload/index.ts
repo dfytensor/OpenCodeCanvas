@@ -33,6 +33,8 @@ const api: ElectronAPI = {
   workspace: {
     prepare: (projectDir, nodeId) =>
       ipcRenderer.invoke('workspace:prepare', projectDir, nodeId),
+    prepareMerge: (sources, nodeId) =>
+      ipcRenderer.invoke('workspace:prepareMerge', sources, nodeId),
     diff: (ws) => ipcRenderer.invoke('workspace:diff', ws),
     apply: (ws) => ipcRenderer.invoke('workspace:apply', ws),
     remove: (ws) => ipcRenderer.invoke('workspace:remove', ws)

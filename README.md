@@ -102,6 +102,7 @@ npm run typecheck
 3. 在终端里**先发一条消息**（这会真正创建会话）。
 4. 状态点变绿后，点节点右上角 **⑂**（或右键 → Fork from here）分叉出新会话节点。
 5. 点 **⤢** 单节点全屏；滚轮缩放画布、拖空白处平移。
+6. **合并多分支**：Shift+点击选中 ≥2 个 fork/merge 节点的标题栏，右键画布空白处 → `Ⓜ Merge N selected branches`，生成绿色 `merge` 节点并自动让 OpenCode 合并；完成后点 `⬇` 把合并结果 apply 回主线。
 
 ---
 
@@ -141,8 +142,9 @@ src/
 - [x] **文件级隔离** — 每次 fork 直接 **copy 整份当前项目**（含未提交改动）到 `.opencode-canvas/{snapshots,copies}/<id>`：`snapshots` 是冻结的 fork 起点（diff 基线），`copies` 是分支运行的工作副本。各分支文件完全独立、可并行操作，不依赖 git
 - [x] **diff 预览节点** — fork 节点上点 `⌗` 生成 diff 节点：`git diff --no-index <snapshot> <copy>`（无需仓库），带 +/- 着色、可 `↻` 刷新
 - [x] **apply 回主线** — fork 节点上点 `⬇`：解析 `git diff --no-index --name-status` 得到分支改动的文件，仅把这些文件回写到主项目（主项目自己改的其它文件不受影响）
+- [x] **AI 多分支合并（merge 节点）** — Shift+点击选中 ≥2 个分支节点，右键画布空白处选 `Ⓜ Merge N selected branches`：基于主线当前状态复制出一个新工作副本（base = 现主线，作 diff/apply 基线），把每个源分支的**绝对工作目录 + 其相对 fork 点的 diff** 写进 `MERGE_TASK.md`，并在 `AGENTS.md` 注入合并指令；新节点起一个 OpenCode 会话，**自动发送** kickoff 让 agent 把各分支改动合并进当前目录。合并节点同样支持 `⌗` diff / `⬇` apply 回主线。血缘为多父节点（绿边框 + `merge` 徽标），完全复用 diff/apply 逻辑——不写任何 merge 算法，合并语义全交给 OpenCode。
 
-> 为什么不用 git worktree？`git worktree` 从最近一次 commit 分叉，**不包含工作区未提交改动**——而 OpenCode agent 通常只改工作区不 commit，分叉出的对话上下文与分支文件状态会对不上。改用"整份 copy 当前状态"后，fork 起点 = 主线此刻的真实状态，对话与文件完全一致；diff/apply 也只靠 `git diff --no-index`（不需要仓库），逻辑统一。
+> 为什么不用 git worktree？`git worktree` 从最近一次 commit 分叉，**不包含工作区未提交改动**——而 OpenCode agent 通常只改工作区不 commit，分叉出的对话上下文与分支文件状态会对不上。改用"整份 copy 当前状态"后，fork 起点 = 主线此刻的真实状态，对话与文件完全一致；diff/apply 也只靠 `git diff --no-index`（不需要仓库），逻辑统一。merge 同理：以"主线当前状态"为基线，apply 回主线即净合并结果。
 
 
 

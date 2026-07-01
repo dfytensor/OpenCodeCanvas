@@ -58,6 +58,17 @@ You are running inside an ISOLATED BRANCH WORKSPACE — an independent copy of t
 - Every file read / write / edit must target this workspace only.
 `
 
+const MERGE_RULE = `
+## Merge Workspace (OpenCode Canvas)
+
+You are running inside a MERGE WORKSPACE. Read MERGE_TASK.md and perform the
+merge it describes.
+- You MAY read full files from the absolute branch directories listed in
+  MERGE_TASK.md — they are intentional merge inputs (the only absolute paths
+  you should touch outside the current working directory).
+- All writes target the CURRENT working directory using RELATIVE paths.
+`
+
 /**
  * Inject a branch-isolation rule into the copy so the forked agent stays inside
  * the workspace and uses relative paths. Appends to AGENTS.md (or CLAUDE.md if
@@ -73,6 +84,19 @@ async function injectIsolationRule(wsCopy: string): Promise<void> {
     await appendFile(claude, '\n' + ISOLATION_RULE)
   } else {
     await writeFile(agents, '# Branch Workspace\n' + ISOLATION_RULE)
+  }
+}
+
+/** Inject a rule block (merge/isolation) into the project's agent-instructions file. */
+async function injectRule(wsCopy: string, heading: string, rule: string): Promise<void> {
+  const agents = join(wsCopy, 'AGENTS.md')
+  const claude = join(wsCopy, 'CLAUDE.md')
+  if (existsSync(agents)) {
+    await appendFile(agents, '\n' + rule)
+  } else if (existsSync(claude)) {
+    await appendFile(claude, '\n' + rule)
+  } else {
+    await writeFile(agents, `# ${heading}\n` + rule)
   }
 }
 
@@ -97,6 +121,88 @@ export async function prepareForkWorkspace(
   await copyProject(projectDir, wsCopy)
   await ensureGitignored(projectDir)
   await injectIsolationRule(wsCopy)
+  return { path: wsCopy, type: 'copy', mainRepoPath: projectDir, baseRef: baseSnap }
+}
+
+const MAX_MERGE_DIFF_CHARS = 8000
+
+function capDiff(s: string, max = MAX_MERGE_DIFF_CHARS): string {
+  if (s.length <= max) return s
+  return s.slice(0, max) + `\n...[diff truncated — read the full file from the branch directory]\n`
+}
+
+/**
+ * Prepare a MERGE workspace: a fresh isolated copy of the main project that an
+ * OpenCode agent will turn into the merged result of several branches.
+ *
+ * The main project is copied twice (base snapshot + working copy) exactly like a
+ * fork, so diff/apply-to-main work unchanged. For each source branch we compute
+ * its diff vs its own fork point and write everything into MERGE_TASK.md, along
+ * with the branch's absolute working-directory path (so the agent can read full
+ * files). The agent then merges all sources into the working copy.
+ *
+ * Using "main project now" as the base means apply-to-main writes the net merged
+ * result relative to the current main state.
+ */
+export async function prepareMergeWorkspace(
+  sources: ForkWorkspace[],
+  nodeId: string
+): Promise<ForkWorkspace> {
+  if (!sources || sources.length < 2) {
+    throw new Error('merge needs at least 2 source branches')
+  }
+  const projectDir = sources[0].mainRepoPath
+  if (!projectDir) throw new Error('source branches have no main repo path')
+
+  const shortId = nodeId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || 'merge'
+  const baseSnap = join(storeRoot(projectDir), 'snapshots', shortId)
+  const wsCopy = join(storeRoot(projectDir), 'copies', shortId)
+  await rm(baseSnap, { recursive: true, force: true })
+  await rm(wsCopy, { recursive: true, force: true })
+  await copyProject(projectDir, baseSnap)
+  await copyProject(projectDir, wsCopy)
+
+  const sections: string[] = []
+  for (let i = 0; i < sources.length; i++) {
+    const src = sources[i]
+    let diff = ''
+    try {
+      diff = src.baseRef ? await diffWorkspace(src) : ''
+    } catch {
+      diff = ''
+    }
+    sections.push(
+      `### Branch ${i + 1}\n` +
+        `Working dir: \`${src.path}\`\n` +
+        `Changed files (diff vs this branch's fork point):\n` +
+        '```diff\n' +
+        (capDiff(diff.trim()) || '(no changes detected / no baseline)') +
+        '\n```\n'
+    )
+  }
+
+  const task =
+    '# Merge Task (OpenCode Canvas)\n\n' +
+    'You are in a MERGE WORKSPACE. Your job is to combine the changes from the\n' +
+    'branch working directories below into THIS directory (the current working\n' +
+    'directory).\n\n' +
+    '## Source branches\n\n' +
+    sections.join('\n') +
+    '\n## Rules\n' +
+    "- Merge ALL listed branches' changes into the current directory.\n" +
+    "- You MAY read full files from each branch's working-dir path above — they\n" +
+    '  are the ONLY absolute paths you should touch outside the cwd.\n' +
+    '- When two branches changed the SAME file, combine both sets of changes\n' +
+    "  intelligently; do not drop either side's edits. If truly contradictory,\n" +
+    '  keep both and add a short comment noting the conflict.\n' +
+    '- Do NOT modify files that none of the branches changed.\n' +
+    '- Write merged results to the current working directory using RELATIVE paths.\n' +
+    '- When done, briefly summarize what you merged.\n'
+
+  await writeFile(join(wsCopy, 'MERGE_TASK.md'), task)
+  await injectRule(wsCopy, 'Merge Workspace', MERGE_RULE)
+  await ensureGitignored(projectDir)
+
   return { path: wsCopy, type: 'copy', mainRepoPath: projectDir, baseRef: baseSnap }
 }
 

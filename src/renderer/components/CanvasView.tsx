@@ -35,6 +35,7 @@ export function CanvasView(): React.ReactElement {
   const onEdgesChange = useCanvasStore((s) => s.onEdgesChange)
   const setActiveCanvas = useCanvasStore((s) => s.setActiveCanvas)
   const addTerminalNode = useCanvasStore((s) => s.addTerminalNode)
+  const mergeNodes = useCanvasStore((s) => s.mergeNodes)
   const defaultCwd = useCanvasStore(
     (s) => (s.canvases.find((c) => c.id === s.activeCanvasId) ?? s.canvases[0])?.cwd ?? ''
   )
@@ -98,6 +99,15 @@ export function CanvasView(): React.ReactElement {
     [rf]
   )
 
+  // branches selected on the canvas that are eligible to be merged together
+  const mergeable = active.nodes.filter(
+    (n) =>
+      n.selected &&
+      (n.data as TerminalNodeData).kind !== 'main' &&
+      !!(n.data as TerminalNodeData).workspaceType &&
+      !!(n.data as TerminalNodeData).cwd
+  )
+
   const paneMenuItems = (): MenuEntry[] => [
     {
       id: 'add-oc',
@@ -123,6 +133,21 @@ export function CanvasView(): React.ReactElement {
           cwd: defaultCwd
         })
     },
+    ...(mergeable.length >= 2
+      ? [
+          {
+            id: 'merge',
+            label: `Merge ${mergeable.length} selected branches`,
+            icon: 'Ⓜ',
+            onSelect: () => {
+              void mergeNodes(mergeable.map((n) => n.id)).catch(() => {
+                /* validation errors handled in store */
+              })
+            }
+          } as MenuEntry,
+          { id: 'sep-merge', separator: true } as MenuEntry
+        ]
+      : []),
     { id: 'sep', separator: true },
     {
       id: 'fit',
@@ -157,9 +182,12 @@ export function CanvasView(): React.ReactElement {
         <MiniMap
           pannable
           zoomable
-          nodeColor={(n) =>
-            (n.data as unknown as TerminalNodeData)?.kind === 'fork' ? '#a371f7' : '#2f81f7'
-          }
+          nodeColor={(n) => {
+            const kind = (n.data as unknown as TerminalNodeData)?.kind
+            if (kind === 'merge') return '#22c55e'
+            if (kind === 'fork') return '#a371f7'
+            return '#2f81f7'
+          }}
           maskColor="rgba(13,17,23,0.7)"
         />
       </ReactFlow>

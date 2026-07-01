@@ -58,6 +58,7 @@ interface CanvasState {
   removeNode: (nodeId: string) => void
   updateNodeData: (nodeId: string, patch: Record<string, unknown>) => void
   forkNode: (nodeId: string) => Promise<void>
+  mergeNodes: (sourceIds: string[]) => Promise<void>
   applyFork: (nodeId: string) => Promise<{ ok: boolean; message: string }>
 }
 
@@ -313,6 +314,75 @@ export const useCanvasStore = create<CanvasState>()(
                       type: 'fork-edge',
                       data: { kind: 'fork' }
                     }
+                  ]
+                }
+              : c
+          )
+        }))
+      },
+
+      mergeNodes: async (sourceIds) => {
+        const s = get()
+        const active = activeOf(s)
+        const eligible: { node: Node; ws: ForkWorkspace }[] = []
+        for (const sid of sourceIds) {
+          const n = active.nodes.find((x) => x.id === sid)
+          if (!n) continue
+          const d = n.data as TerminalNodeData
+          if (!d.workspaceType || !d.cwd) continue
+          eligible.push({
+            node: n,
+            ws: {
+              path: d.cwd,
+              type: d.workspaceType,
+              branchName: d.branchName,
+              mainRepoPath: d.mainRepoPath ?? d.cwd,
+              baseRef: d.baseSnapshotPath
+            }
+          })
+        }
+        if (eligible.length < 2) {
+          throw new Error('Select at least 2 branch nodes (with isolated workspaces) to merge.')
+        }
+
+        const newId = nanoid(10)
+        const ws = await window.electronAPI.workspace.prepareMerge(
+          eligible.map((e) => e.ws),
+          newId
+        )
+
+        const ax = eligible.reduce((a, e) => a + e.node.position.x, 0) / eligible.length
+        const ay = eligible.reduce((a, e) => a + e.node.position.y, 0) / eligible.length
+        get().addTerminalNode({
+          id: newId,
+          position: { x: ax + 360, y: ay + 180 },
+          mode: 'opencode',
+          cwd: ws.path,
+          title: 'merge',
+          kind: 'merge'
+        })
+        get().updateNodeData(newId, {
+          mergeFrom: eligible.map((e) => e.node.id),
+          workspaceType: ws.type,
+          branchName: ws.branchName,
+          mainRepoPath: ws.mainRepoPath,
+          baseSnapshotPath: ws.baseRef
+        })
+        const srcIds = eligible.map((e) => e.node.id)
+        set((st) => ({
+          canvases: st.canvases.map((c) =>
+            c.id === st.activeCanvasId
+              ? {
+                  ...c,
+                  edges: [
+                    ...c.edges,
+                    ...srcIds.map((sid) => ({
+                      id: `merge-${sid}-${newId}`,
+                      source: sid,
+                      target: newId,
+                      type: 'fork-edge',
+                      data: { kind: 'merge' }
+                    }))
                   ]
                 }
               : c

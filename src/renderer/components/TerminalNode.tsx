@@ -58,6 +58,7 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
   const spawnedRef = useRef(false)
   const deadRef = useRef(false)
   const spawnEpochRef = useRef(0)
+  const kickoffRef = useRef(false)
 
   const [fullscreen, setFullscreen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -147,7 +148,21 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
         command,
         args
       })
-      .then(() => setStatus('ready'))
+      .then(() => {
+        setStatus('ready')
+        // Merge nodes auto-kick the merge task once the agent is up. Best-effort:
+        // if the TUI isn't ready yet the keystrokes are simply lost and the user
+        // can resend (the full instructions live in MERGE_TASK.md).
+        if (data.kind === 'merge' && !kickoffRef.current) {
+          kickoffRef.current = true
+          setTimeout(() => {
+            window.electronAPI.pty.input(
+              data.ptyId,
+              'Read MERGE_TASK.md and merge all listed branches\' changes into the current directory.\r'
+            )
+          }, 1500)
+        }
+      })
       .catch((e) => {
         setStatus('dead')
         const t = termRef.current
@@ -326,7 +341,8 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
         className={clsx(
           'terminal-node',
           selected && 'ring-2 ring-canvas-accent',
-          data.kind === 'fork' && 'ring-1 ring-canvas-fork/50'
+          data.kind === 'fork' && 'ring-1 ring-canvas-fork/50',
+          data.kind === 'merge' && 'ring-1 ring-green-500/50'
         )}
         style={{ width: '100%', height: '100%' }}
         onContextMenu={onContextMenu}
@@ -352,6 +368,11 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
               fork
             </span>
           )}
+          {data.kind === 'merge' && (
+            <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-400">
+              merge
+            </span>
+          )}
           <span
             className={clsx(
               'ml-0.5 inline-block h-1.5 w-1.5 rounded-full',
@@ -370,7 +391,7 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
               {forking ? '…' : '⑂'}
             </button>
           )}
-          {data.kind === 'fork' && data.workspaceType && (
+          {(data.kind === 'fork' || data.kind === 'merge') && data.workspaceType && (
             <>
               <button
                 onClick={() => addDiffNode(id)}
@@ -420,6 +441,9 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
               <span className="text-sm font-medium text-gray-100">{data.title}</span>
               {data.kind === 'fork' && (
                 <span className="rounded bg-canvas-fork/20 px-1.5 py-0.5 text-[10px] text-canvas-fork">fork</span>
+              )}
+              {data.kind === 'merge' && (
+                <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] text-green-400">merge</span>
               )}
               <div className="flex-1" />
               <button
