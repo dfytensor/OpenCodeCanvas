@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+}
+
+/* dotted grid background on the flow pane */
+.react-flow {
+  background-color: #0d1117;
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__controls {
+  box-shadow: none;
+}
+
+.react-flow__controls-button {
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  fill: #c9d1d9;
+}
+.react-flow__controls-button:hover {
+  background: #21262d;
+}
+
+.react-flow__minimap {
+  background: #161b22 !important;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+/* fork edge styling */
+.react-flow__edge.fork-edge .react-flow__edge-path {
+  stroke: #a371f7;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+/* terminal node */
+.terminal-node {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-node__body {
+  background: #010409;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-node__body .xterm {
+  padding: 8px;
+  height: 100%;
+}
+
+.terminal-node__body .xterm-viewport {
+  overflow-y: auto;
+}
+
+/* fullscreen overlay */
+.terminal-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #010409;
+}
+
+/* scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
