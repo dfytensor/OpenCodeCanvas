@@ -30,6 +30,13 @@ const api: ElectronAPI = {
     isRepo: (path) => ipcRenderer.invoke('git:isRepo', path),
     diff: (worktree, base) => ipcRenderer.invoke('git:diff', worktree, base)
   },
+  workspace: {
+    prepare: (projectDir, nodeId) =>
+      ipcRenderer.invoke('workspace:prepare', projectDir, nodeId),
+    diff: (ws) => ipcRenderer.invoke('workspace:diff', ws),
+    apply: (ws) => ipcRenderer.invoke('workspace:apply', ws),
+    remove: (ws) => ipcRenderer.invoke('workspace:remove', ws)
+  },
   dialog: {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory')
   },

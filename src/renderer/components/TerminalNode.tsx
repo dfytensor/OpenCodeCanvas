@@ -65,6 +65,8 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
 
   const removeNode = useCanvasStore((s) => s.removeNode)
   const forkNode = useCanvasStore((s) => s.forkNode)
+  const applyFork = useCanvasStore((s) => s.applyFork)
+  const addDiffNode = useCanvasStore((s) => s.addDiffNode)
   const updateNodeData = useCanvasStore((s) => s.updateNodeData)
 
   function attachTo(container: HTMLElement): AttachResult {
@@ -162,9 +164,12 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
     // first message.
     let cancelled = false
     if (isOc && !data.sessionId) {
-      void resolveSession().then((sid) => {
-        if (!cancelled && sid && !deadRef.current) {
-          updateNodeData(id, { sessionId: sid })
+      void resolveSession().then((found) => {
+        if (!cancelled && found && !deadRef.current) {
+          updateNodeData(id, {
+            sessionId: found.id,
+            ...(found.title ? { title: found.title } : {})
+          })
         }
       })
     }
@@ -198,8 +203,8 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
   // Locate this terminal's own OpenCode session by matching the working
   // directory + creation time. The CLI listing has no parentID, so we identify
   // the session as the newest one created at/after this node spawned in cwd.
-  const resolveSession = async (): Promise<string | null> => {
-    if (data.sessionId) return data.sessionId
+  const resolveSession = async (): Promise<{ id: string; title?: string } | null> => {
+    if (data.sessionId) return { id: data.sessionId }
     const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '')
     const target = norm(data.cwd)
     for (let i = 0; i < 8; i++) {
@@ -213,7 +218,7 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
             (a: { created?: unknown }, b: { created?: unknown }) =>
               Number(b.created ?? 0) - Number(a.created ?? 0)
           )[0]
-        if (hit?.id) return String(hit.id)
+        if (hit?.id) return { id: String(hit.id), title: hit.title ? String(hit.title) : undefined }
       } catch {
         // ignore transient failure, retry
       }
@@ -225,9 +230,14 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
   const doFork = async (): Promise<void> => {
     setForking(true)
     try {
-      const sid = await resolveSession()
-      if (sid && sid !== data.sessionId) updateNodeData(id, { sessionId: sid })
-      if (!sid) {
+      const found = await resolveSession()
+      if (found && found.id !== data.sessionId) {
+        updateNodeData(id, {
+          sessionId: found.id,
+          ...(found.title ? { title: found.title } : {})
+        })
+      }
+      if (!found) {
         termRef.current?.write(
           '\r\n\x1b[31mNo OpenCode session found — send a message in the terminal first, then fork.\x1b[0m\r\n'
         )
@@ -238,6 +248,17 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
       termRef.current?.write(`\r\n\x1b[31mFork failed: ${String(e)}\x1b[0m\r\n`)
     } finally {
       setForking(false)
+    }
+  }
+
+  const doApply = async (): Promise<void> => {
+    try {
+      const res = await applyFork(id)
+      termRef.current?.write(
+        `\r\n\x1b[${res.ok ? '32' : '31'}m[apply] ${res.message}\x1b[0m\r\n`
+      )
+    } catch (e) {
+      termRef.current?.write(`\r\n\x1b[31mApply failed: ${String(e)}\x1b[0m\r\n`)
     }
   }
 
@@ -334,6 +355,24 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
             >
               {forking ? '…' : '⑂'}
             </button>
+          )}
+          {data.kind === 'fork' && data.workspaceType && (
+            <>
+              <button
+                onClick={() => addDiffNode(id)}
+                title="Show diff (changes in this branch)"
+                className="rounded px-1.5 text-xs text-canvas-accent hover:bg-canvas-accent/20"
+              >
+                ⌗
+              </button>
+              <button
+                onClick={() => void doApply()}
+                title="Apply this branch's changes back to main"
+                className="rounded px-1.5 text-xs text-green-400 hover:bg-green-500/20"
+              >
+                ⬇
+              </button>
+            </>
           )}
           <button
             onClick={() => setFullscreen((v) => !v)}

@@ -137,10 +137,13 @@ src/
 
 ## 路线图
 
-- [ ] 分支节点标题显示对话摘要（从 session list 取 title）
-- [ ] diff 预览节点（`git diff` 实时挂在分支旁）
-- [ ] apply 回主线节点（`git merge` 合并代码改动）
-- [ ] 文件级隔离（可选 git worktree per fork）
+- [x] **分支节点标题显示对话摘要** — 检测到会话后自动把 OpenCode session 的 `title` 写到节点上
+- [x] **文件级隔离** — fork 时每个分支获得独立工作区：git 仓库用 `git worktree`；**非 git 项目自建快照拷贝**（`.opencode-canvas/snapshots|copies`），保证分支间文件并行互不干扰
+- [x] **diff 预览节点** — fork 节点上点 `⌗` 生成 diff 节点：git 模式 `git -C <worktree> diff HEAD`；拷贝模式 `git diff --no-index <base> <workspace>`（无需仓库），带 +/- 着色、可刷新
+- [x] **apply 回主线** — fork 节点上点 `⬇`：git 模式 commit 后 `git merge` 进主线分支；拷贝模式把分支文件回写到主项目
+
+> 设计取舍：OpenCode `--fork` 只分叉**对话**，不分叉**文件**。为了让 diff/apply 有意义，fork 时额外建立文件级隔离工作区。git 仓库走原生 worktree（高效、可 merge）；没有 git 时用自建的"基线快照 + 工作副本"，靠 `git diff --no-index` 出 diff、靠文件回写做 apply——即用户所说的"git 实现不了就自己建一套隔离并行能力"。
+
 
 ---
 

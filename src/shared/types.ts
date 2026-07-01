@@ -12,7 +12,29 @@ export interface TerminalNodeData {
   cwd: string
   title: string
   ptyId: string
+  // file-level isolation (roadmap #4)
+  workspaceType?: 'worktree' | 'copy'
+  branchName?: string
+  baseSnapshotPath?: string
+  mainRepoPath?: string
   [key: string]: unknown
+}
+
+export interface DiffNodeData {
+  sourceNodeId: string
+  title: string
+  diff?: string
+  loading?: boolean
+  error?: string
+  [key: string]: unknown
+}
+
+export interface ForkWorkspace {
+  path: string
+  type: 'worktree' | 'copy'
+  branchName?: string
+  mainRepoPath: string
+  baseRef?: string
 }
 
 export interface PtySpawnOptions {
@@ -60,6 +82,12 @@ export interface ElectronAPI {
     worktreeRemove: (path: string) => Promise<void>
     isRepo: (path: string) => Promise<boolean>
     diff: (worktree: string, base?: string) => Promise<string>
+  }
+  workspace: {
+    prepare: (projectDir: string, nodeId: string) => Promise<ForkWorkspace>
+    diff: (ws: ForkWorkspace) => Promise<string>
+    apply: (ws: ForkWorkspace) => Promise<{ ok: boolean; message: string }>
+    remove: (ws: ForkWorkspace) => Promise<void>
   }
   dialog: {
     pickDirectory: () => Promise<string | null>

@@ -2,7 +2,8 @@ import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { spawnPty, writePty, resizePty, killPty } from './pty'
 import { sessionList, detectSession, runRaw } from './opencode'
 import { worktreeAdd, worktreeRemove, isRepo, gitDiff } from './worktree'
-import type { PtySpawnOptions } from '../shared/types'
+import { prepareForkWorkspace, diffWorkspace, applyWorkspaceToMain, removeWorkspace } from './workspace'
+import type { PtySpawnOptions, ForkWorkspace } from '../shared/types'
 
 export function registerIpc(): void {
   // ---- pty ----
@@ -53,6 +54,23 @@ export function registerIpc(): void {
 
   ipcMain.handle('git:diff', async (_e, worktree: string, base?: string) => {
     return gitDiff(worktree, base)
+  })
+
+  // ---- workspace isolation (file-level branching) ----
+  ipcMain.handle('workspace:prepare', async (_e, projectDir: string, nodeId: string) => {
+    return prepareForkWorkspace(projectDir, nodeId)
+  })
+
+  ipcMain.handle('workspace:diff', async (_e, ws: ForkWorkspace) => {
+    return diffWorkspace(ws)
+  })
+
+  ipcMain.handle('workspace:apply', async (_e, ws: ForkWorkspace) => {
+    return applyWorkspaceToMain(ws)
+  })
+
+  ipcMain.handle('workspace:remove', async (_e, ws: ForkWorkspace) => {
+    await removeWorkspace(ws)
   })
 
   // ---- dialog ----

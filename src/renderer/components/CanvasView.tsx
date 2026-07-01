@@ -11,12 +11,13 @@ import {
   type Edge
 } from '@xyflow/react'
 import { TerminalNode } from './TerminalNode'
+import { DiffNode } from './DiffNode'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
 import { useCanvasStore } from '../store/canvasStore'
 import type { AddMode } from './Toolbar'
 import type { TerminalNodeData } from '../../shared/types'
 
-const nodeTypes = { terminal: TerminalNode }
+const nodeTypes = { terminal: TerminalNode, diff: DiffNode }
 const edgeTypes = { 'fork-edge': BezierEdge }
 
 interface PaneMenuState {
@@ -132,8 +133,8 @@ export function CanvasView(): React.ReactElement {
   return (
     <div ref={wrapperRef} className="relative h-full w-full">
       <ReactFlow
-        nodes={active.nodes as Node<TerminalNodeData>[]}
-        edges={active.edges as Edge[]}
+        nodes={active.nodes}
+        edges={active.edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}

@@ -14,16 +14,17 @@ import {
   type Connection,
   type XYPosition
 } from '@xyflow/react'
-import type { TerminalNodeData, TerminalMode, NodeKind } from '../../shared/types'
+import type { TerminalNodeData, TerminalMode, NodeKind, DiffNodeData, ForkWorkspace } from '../../shared/types'
 
 export interface CanvasDoc {
   id: string
   name: string
-  nodes: Node<TerminalNodeData>[]
+  nodes: Node[]
   edges: Edge[]
 }
 
 interface AddTerminalParams {
+  id?: string
   position: XYPosition
   mode: TerminalMode
   cwd: string
@@ -51,9 +52,11 @@ interface CanvasState {
   onEdgesChange: OnEdgesChange
   onConnect: (c: Connection) => void
   addTerminalNode: (params: AddTerminalParams) => string
+  addDiffNode: (sourceNodeId: string) => string
   removeNode: (nodeId: string) => void
-  updateNodeData: (nodeId: string, patch: Partial<TerminalNodeData>) => void
+  updateNodeData: (nodeId: string, patch: Record<string, unknown>) => void
   forkNode: (nodeId: string) => Promise<void>
+  applyFork: (nodeId: string) => Promise<{ ok: boolean; message: string }>
 }
 
 function newCanvas(name: string): CanvasDoc {
@@ -81,9 +84,9 @@ export const useCanvasStore = create<CanvasState>()(
       deleteCanvas: (id) => {
         const s = get()
         if (s.canvases.length <= 1) return
-        // cleanup ptys + worktrees for this canvas' nodes
+        // cleanup ptys + workspaces for this canvas' nodes
         for (const n of activeOf(s).nodes) {
-          cleanupNode(n.data)
+          cleanupNode(n.data as TerminalNodeData)
         }
         const remaining = s.canvases.filter((c) => c.id !== id)
         set({
@@ -116,9 +119,7 @@ export const useCanvasStore = create<CanvasState>()(
       onNodesChange: (changes) =>
         set((s) => ({
           canvases: s.canvases.map((c) =>
-            c.id === s.activeCanvasId
-              ? { ...c, nodes: applyNodeChanges(changes, c.nodes) as Node<TerminalNodeData>[] }
-              : c
+            c.id === s.activeCanvasId ? { ...c, nodes: applyNodeChanges(changes, c.nodes) } : c
           )
         })),
 
@@ -138,8 +139,17 @@ export const useCanvasStore = create<CanvasState>()(
           )
         })),
 
-      addTerminalNode: ({ position, mode, cwd, title, kind = 'main', width = 620, height = 340 }) => {
-        const id = nanoid(10)
+      addTerminalNode: ({
+        id,
+        position,
+        mode,
+        cwd,
+        title,
+        kind = 'main',
+        width = 620,
+        height = 340
+      }) => {
+        const nodeId = id ?? nanoid(10)
         const data: TerminalNodeData = {
           sessionId: '',
           mode,
@@ -148,8 +158,8 @@ export const useCanvasStore = create<CanvasState>()(
           title: title ?? (mode === 'opencode' ? 'OpenCode' : 'Terminal'),
           ptyId: nanoid(8)
         }
-        const node: Node<TerminalNodeData> = {
-          id,
+        const node: Node = {
+          id: nodeId,
           type: 'terminal',
           position,
           width,
@@ -162,13 +172,55 @@ export const useCanvasStore = create<CanvasState>()(
             c.id === s.activeCanvasId ? { ...c, nodes: [...c.nodes, node] } : c
           )
         }))
-        return id
+        return nodeId
+      },
+
+      addDiffNode: (sourceNodeId) => {
+        const src = activeOf(get()).nodes.find((n) => n.id === sourceNodeId)
+        const data: DiffNodeData = {
+          sourceNodeId,
+          title: `diff · ${(src?.data as { title?: string })?.title ?? sourceNodeId}`,
+          loading: true
+        }
+        const node: Node = {
+          id: nanoid(10),
+          type: 'diff',
+          position: {
+            x: (src?.position.x ?? 0) + 360,
+            y: (src?.position.y ?? 0) + 260
+          },
+          width: 560,
+          height: 360,
+          data
+        }
+        const diffId = node.id
+        set((s) => ({
+          canvases: s.canvases.map((c) =>
+            c.id === s.activeCanvasId
+              ? {
+                  ...c,
+                  nodes: [...c.nodes, node],
+                  edges: [
+                    ...c.edges,
+                    {
+                      id: `diff-${sourceNodeId}-${diffId}`,
+                      source: sourceNodeId,
+                      target: diffId,
+                      type: 'fork-edge',
+                      data: { kind: 'diff' }
+                    }
+                  ]
+                }
+              : c
+          )
+        }))
+        return diffId
       },
 
       removeNode: (nodeId) => {
         const s = get()
         const node = activeOf(s).nodes.find((n) => n.id === nodeId)
-        if (node) cleanupNode(node.data)
+        if (node) cleanupNode(node.data as TerminalNodeData)
         set((st) => ({
           canvases: st.canvases.map((c) =>
             c.id === st.activeCanvasId
@@ -200,26 +252,44 @@ export const useCanvasStore = create<CanvasState>()(
         const s = get()
         const src = activeOf(s).nodes.find((n) => n.id === nodeId)
         if (!src) return
-        const srcData = src.data
+        const srcData = src.data as TerminalNodeData
         if (!srcData.sessionId) {
           throw new Error('Source node has no session yet — wait for OpenCode to start before forking.')
         }
-        // Pure session branch: the new node spawns `opencode --session <parent> --fork`,
-        // which copies the parent conversation history into a new session and diverges from there.
+        const newId = nanoid(10)
+
+        // file-level isolation: git worktree if available, else a self-built
+        // snapshot copy. Falls back to shared cwd so session branching always works.
+        let ws: ForkWorkspace | null = null
+        try {
+          ws = await window.electronAPI.workspace.prepare(srcData.cwd, newId)
+        } catch {
+          ws = null
+        }
+
         const newPos = {
           x: src.position.x + 360,
           y: src.position.y + 90
         }
-        const newId = get().addTerminalNode({
+        get().addTerminalNode({
+          id: newId,
           position: newPos,
           mode: 'opencode',
-          cwd: srcData.cwd,
+          cwd: ws?.path ?? srcData.cwd,
           title: 'fork',
           kind: 'fork'
         })
         get().updateNodeData(newId, {
           forkFrom: nodeId,
-          forkParentSession: srcData.sessionId
+          forkParentSession: srcData.sessionId,
+          ...(ws
+            ? {
+                workspaceType: ws.type,
+                branchName: ws.branchName,
+                mainRepoPath: ws.mainRepoPath,
+                baseSnapshotPath: ws.baseRef
+              }
+            : {})
         })
         set((st) => ({
           canvases: st.canvases.map((c) =>
@@ -240,6 +310,23 @@ export const useCanvasStore = create<CanvasState>()(
               : c
           )
         }))
+      },
+
+      applyFork: async (nodeId) => {
+        const node = activeOf(get()).nodes.find((n) => n.id === nodeId)
+        if (!node) return { ok: false, message: 'node not found' }
+        const d = node.data as TerminalNodeData
+        if (!d.workspaceType || !d.cwd) {
+          return { ok: false, message: 'this branch has no isolated workspace' }
+        }
+        const ws: ForkWorkspace = {
+          path: d.cwd,
+          type: d.workspaceType,
+          branchName: d.branchName,
+          mainRepoPath: d.mainRepoPath ?? d.cwd,
+          baseRef: d.baseSnapshotPath
+        }
+        return window.electronAPI.workspace.apply(ws)
       }
     }),
     {
@@ -263,5 +350,18 @@ function cleanupNode(data: TerminalNodeData): void {
     window.electronAPI?.pty.kill(data.ptyId)
   } catch {
     // ignore
+  }
+  if (data.workspaceType && data.cwd) {
+    try {
+      void window.electronAPI?.workspace.remove({
+        path: data.cwd,
+        type: data.workspaceType,
+        branchName: data.branchName,
+        mainRepoPath: data.mainRepoPath ?? data.cwd,
+        baseRef: data.baseSnapshotPath
+      })
+    } catch {
+      // ignore
+    }
   }
 }
