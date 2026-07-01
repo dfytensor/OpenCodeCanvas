@@ -1,38 +1,32 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { join } from 'path'
-import { mkdir, cp, rm, readdir, appendFile, readFile } from 'fs/promises'
-import { existsSync } from 'fs'
-import { execGit, isRepo, repoRoot } from './worktree'
+import { join, dirname, relative } from 'path'
+import { mkdir, cp, rm, readdir } from 'fs/promises'
 import type { ForkWorkspace } from '../shared/types'
 
 const run = promisify(execFile)
 const STORE_DIR = '.opencode-canvas'
-const IGNORE = new Set([STORE_DIR, 'node_modules', '.git', '.cache', 'dist', 'out', 'build'])
+// never copy these into a branch workspace
+const IGNORE = new Set([
+  STORE_DIR,
+  'node_modules',
+  '.git',
+  '.cache',
+  'dist',
+  'out',
+  'build',
+  '.next',
+  '.venv'
+])
 
 function storeRoot(projectDir: string): string {
   return join(projectDir, STORE_DIR)
 }
 
-/**
- * Ensure the tool-managed store dir is gitignored so worktrees/snapshots
- * don't pollute the user's repo.
- */
-async function ensureGitignored(root: string): Promise<void> {
-  const gi = join(root, '.gitignore')
-  let content = ''
-  if (existsSync(gi)) content = await readFile(gi, 'utf8')
-  if (!content.includes(STORE_DIR + '/')) {
-    await appendFile(gi, `\n# opencode-canvas tool store\n${STORE_DIR}/\n`)
-  }
-}
-
-/**
- * Copy a project tree (skipping heavy/tool-managed dirs) into dest.
- * Used for the non-git isolation fallback.
- */
+/** Copy a project tree (skipping heavy / tool-managed / vcs dirs). */
 async function copyProject(src: string, dest: string): Promise<void> {
   const entries = await readdir(src, { withFileTypes: true })
+  await mkdir(dest, { recursive: true })
   for (const e of entries) {
     if (IGNORE.has(e.name)) continue
     await cp(join(src, e.name), join(dest, e.name), { recursive: true })
@@ -40,112 +34,139 @@ async function copyProject(src: string, dest: string): Promise<void> {
 }
 
 /**
- * Prepare an isolated working directory for a fork.
- *  - git repo  -> a real `git worktree` (shares .git, isolated files)
- *  - non-git   -> a copied snapshot (self-contained isolation)
+ * Prepare an isolated workspace for a fork by copying the project's CURRENT
+ * state (including uncommitted changes). Two copies are made:
+ *   - base snapshot (frozen fork-point; the diff baseline)
+ *   - working copy  (where the branch's agent runs and edits)
+ * This always captures the live working tree, so a forked conversation's
+ * context matches the branch's file state.
  */
 export async function prepareForkWorkspace(
   projectDir: string,
   nodeId: string
 ): Promise<ForkWorkspace> {
   const shortId = nodeId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || 'fork'
-  const repo = await isRepo(projectDir)
-
-  if (repo) {
-    const root = await repoRoot(projectDir)
-    await ensureGitignored(root)
-    const branchName = `oc-fork-${shortId}`
-    const wtPath = join(root, STORE_DIR, 'worktrees', branchName)
-    await mkdir(join(root, STORE_DIR, 'worktrees'), { recursive: true })
-    // branch from current HEAD, materialise in its own worktree
-    await execGit(root, ['worktree', 'add', '-b', branchName, wtPath, 'HEAD'])
-    return { path: wtPath, type: 'worktree', branchName, mainRepoPath: root, baseRef: 'HEAD' }
-  }
-
-  // non-git: self-built isolation via snapshot + copy
   const baseSnap = join(storeRoot(projectDir), 'snapshots', shortId)
   const wsCopy = join(storeRoot(projectDir), 'copies', shortId)
-  await mkdir(baseSnap, { recursive: true })
-  await mkdir(wsCopy, { recursive: true })
+  await rm(baseSnap, { recursive: true, force: true })
+  await rm(wsCopy, { recursive: true, force: true })
   await copyProject(projectDir, baseSnap)
   await copyProject(projectDir, wsCopy)
   return { path: wsCopy, type: 'copy', mainRepoPath: projectDir, baseRef: baseSnap }
 }
 
 /**
- * Unified diff of what the branch changed vs its fork point.
- *  - worktree: working tree vs branch tip
- *  - copy:     workspace vs base snapshot (git diff --no-index, no repo needed)
+ * Unified diff of what the branch changed vs its fork point (base snapshot).
+ * Uses `git diff --no-index` so no repository is required. Absolute store
+ * paths are stripped from the output for a readable diff.
  */
 export async function diffWorkspace(ws: ForkWorkspace): Promise<string> {
-  if (ws.type === 'worktree') {
-    try {
-      return await execGit(ws.path, ['diff', 'HEAD'])
-    } catch {
-      return ''
-    }
-  }
   // git diff --no-index exits 1 when differences exist (stdout = the diff)
+  let raw = ''
   try {
     const r = await run('git', ['diff', '--no-index', '--no-color', ws.baseRef!, ws.path])
-    return r.stdout
+    raw = r.stdout
   } catch (e: unknown) {
     const err = e as { stdout?: string }
-    return err.stdout ?? ''
+    raw = err.stdout ?? ''
   }
+  // collapse the absolute snapshot/copy prefixes into clean a/ b/ labels
+  return raw
+    .split(ws.baseRef!)
+    .join('')
+    .split(ws.path)
+    .join('')
+    .replace(/\/{2,}/g, '/')
+}
+
+interface FileChange {
+  status: 'A' | 'M' | 'D'
+  rel: string
+}
+
+/** Turn one `git diff --no-index` path token into a project-relative path. */
+function toRel(token: string, baseRef: string, copyPath: string): string {
+  // git may emit either `a/<abspath>` (in unified diff) or a bare `<abspath>`
+  // (in --name-status). Strip an optional a//b/ prefix, then strip the known
+  // snapshot/copy directory prefix to recover the project-relative path.
+  const t = token.replace(/^"|"$/g, '').replace(/^[ab]\//, '')
+  const aP = baseRef + '/'
+  const bP = copyPath + '/'
+  if (t.startsWith(aP)) return t.slice(aP.length).replace(/\\/g, '/')
+  if (t.startsWith(bP)) return t.slice(bP.length).replace(/\\/g, '/')
+  const rb = relative(baseRef, t)
+  if (rb && !rb.startsWith('..') && rb !== '') return rb.replace(/\\/g, '/')
+  const rp = relative(copyPath, t)
+  if (rp && !rp.startsWith('..') && rp !== '') return rp.replace(/\\/g, '/')
+  return t.replace(/\\/g, '/')
+}
+
+/** Parse `git diff --no-index --name-status a b` into per-file changes. */
+function parseNameStatus(out: string, baseRef: string, copyPath: string): FileChange[] {
+  const changes: FileChange[] = []
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue
+    const status = line[0] as 'A' | 'M' | 'D'
+    if (status !== 'A' && status !== 'M' && status !== 'D') continue
+    // rename lines look like: R100\t"b/.../old"\t"b/.../new" — take the last token
+    const tokens = line.slice(1).trim().split('\t')
+    const rel = toRel(tokens[tokens.length - 1], baseRef, copyPath)
+    if (rel) changes.push({ status, rel })
+  }
+  return changes
 }
 
 /**
- * Merge / copy the branch's changes back into the main project.
+ * Apply the branch's changes back to the main project. Only files that differ
+ * from the fork-point snapshot are written, so concurrent main work on other
+ * files is preserved.
  */
 export async function applyWorkspaceToMain(
   ws: ForkWorkspace
 ): Promise<{ ok: boolean; message: string }> {
-  if (ws.type === 'worktree' && ws.branchName) {
-    try {
-      // commit the branch's working tree so it can be merged
-      await execGit(ws.path, ['add', '-A'])
-      try {
-        await execGit(ws.path, ['commit', '-m', `opencode-canvas: ${ws.branchName} snapshot`])
-      } catch {
-        // nothing to commit is fine
-      }
-      await execGit(ws.mainRepoPath, ['merge', '--no-edit', ws.branchName])
-      return { ok: true, message: `merged '${ws.branchName}' into the main branch` }
-    } catch (e: unknown) {
-      const err = e as { stderr?: string; message?: string }
-      return { ok: false, message: String(err.stderr ?? err.message ?? e) }
-    }
-  }
-  // copy mode: write the branch's files back over the main project
   try {
-    await copyProject(ws.path, ws.mainRepoPath)
-    return { ok: true, message: 'copied fork files back into the project' }
+    let nameStatus = ''
+    try {
+      const r = await run('git', [
+        'diff',
+        '--no-index',
+        '--name-status',
+        ws.baseRef!,
+        ws.path
+      ])
+      nameStatus = r.stdout
+    } catch (e: unknown) {
+      const err = e as { stdout?: string }
+      nameStatus = err.stdout ?? ''
+    }
+
+    const changes = parseNameStatus(nameStatus, ws.baseRef!, ws.path)
+    if (changes.length === 0) {
+      return { ok: true, message: 'no changes to apply' }
+    }
+
+    for (const ch of changes) {
+      const dest = join(ws.mainRepoPath, ch.rel)
+      if (ch.status === 'D') {
+        await rm(dest, { force: true })
+      } else {
+        await mkdir(dirname(dest), { recursive: true })
+        await cp(join(ws.path, ch.rel), dest, { recursive: true })
+      }
+    }
+    return { ok: true, message: `applied ${changes.length} change(s) to the project` }
   } catch (e: unknown) {
     const err = e as { message?: string }
     return { ok: false, message: String(err.message ?? e) }
   }
 }
 
-/**
- * Tear down an isolated workspace (worktree removal / dir delete).
- */
+/** Tear down a branch workspace (snapshot + working copy). */
 export async function removeWorkspace(ws: ForkWorkspace): Promise<void> {
   try {
-    if (ws.type === 'worktree') {
-      await execGit(ws.mainRepoPath, ['worktree', 'remove', '--force', ws.path])
-      if (ws.branchName) {
-        try {
-          await execGit(ws.mainRepoPath, ['branch', '-D', ws.branchName])
-        } catch {
-          // branch may be merged/in-use; ignore
-        }
-      }
-    } else {
-      await rm(ws.path, { recursive: true, force: true })
-      if (ws.baseRef) await rm(ws.baseRef, { recursive: true, force: true })
-    }
+    await rm(ws.path, { recursive: true, force: true })
+    if (ws.baseRef) await rm(ws.baseRef, { recursive: true, force: true })
   } catch {
-    // best-effort cleanup
+    // best-effort
   }
 }
