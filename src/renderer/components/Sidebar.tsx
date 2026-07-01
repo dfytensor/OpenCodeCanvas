@@ -10,24 +10,28 @@ export function Sidebar(): React.ReactElement {
   const deleteCanvas = useCanvasStore((s) => s.deleteCanvas)
   const renameCanvas = useCanvasStore((s) => s.renameCanvas)
   const duplicateCanvas = useCanvasStore((s) => s.duplicateCanvas)
-  const defaultCwd = useCanvasStore((s) => s.defaultCwd)
-  const setDefaultCwd = useCanvasStore((s) => s.setDefaultCwd)
+  const setCanvasCwd = useCanvasStore((s) => s.setCanvasCwd)
+  const activeCwd = useCanvasStore(
+    (s) => (s.canvases.find((c) => c.id === s.activeCanvasId) ?? s.canvases[0])?.cwd ?? ''
+  )
 
   const pickDir = async (): Promise<void> => {
     const d = await window.electronAPI.dialog.pickDirectory()
-    if (d) setDefaultCwd(d)
+    if (d) setCanvasCwd(activeId, d)
   }
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-canvas-border bg-canvas-node/60">
       <div className="px-4 pb-3 pt-4">
-        <div className="text-xs font-semibold uppercase tracking-wider text-gray-500">Project</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+          Project (this canvas)
+        </div>
         <button
           onClick={pickDir}
           className="mt-2 w-full truncate rounded-md border border-canvas-border bg-canvas-bg px-3 py-2 text-left text-sm text-gray-200 hover:border-canvas-accent"
-          title={defaultCwd || 'Choose a working directory'}
+          title={activeCwd || 'Choose a working directory for this canvas'}
         >
-          {defaultCwd ? defaultCwd : 'Pick directory…'}
+          {activeCwd ? activeCwd : 'Pick directory…'}
         </button>
       </div>
 

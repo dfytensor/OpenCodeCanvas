@@ -7,8 +7,10 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ onAdd }: ToolbarProps): React.ReactElement {
-  const defaultCwd = useCanvasStore((s) => s.defaultCwd)
-  const ready = defaultCwd.length > 0
+  const activeCwd = useCanvasStore(
+    (s) => (s.canvases.find((c) => c.id === s.activeCanvasId) ?? s.canvases[0])?.cwd ?? ''
+  )
+  const ready = activeCwd.length > 0
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-canvas-border bg-canvas-node/60 px-4">

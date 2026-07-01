@@ -19,6 +19,7 @@ import type { TerminalNodeData, TerminalMode, NodeKind, DiffNodeData, ForkWorksp
 export interface CanvasDoc {
   id: string
   name: string
+  cwd: string
   nodes: Node[]
   edges: Edge[]
 }
@@ -46,6 +47,7 @@ interface CanvasState {
   duplicateCanvas: (id: string) => string
   setActiveCanvas: (id: string) => void
   setDefaultCwd: (cwd: string) => void
+  setCanvasCwd: (id: string, cwd: string) => void
 
   // node ops (on active canvas)
   onNodesChange: OnNodesChange
@@ -59,8 +61,8 @@ interface CanvasState {
   applyFork: (nodeId: string) => Promise<{ ok: boolean; message: string }>
 }
 
-function newCanvas(name: string): CanvasDoc {
-  return { id: nanoid(8), name, nodes: [], edges: [] }
+function newCanvas(name: string, cwd = ''): CanvasDoc {
+  return { id: nanoid(8), name, cwd, nodes: [], edges: [] }
 }
 
 function activeOf(state: CanvasState): CanvasDoc {
@@ -76,7 +78,7 @@ export const useCanvasStore = create<CanvasState>()(
 
       addCanvas: () => {
         const name = `Canvas ${get().canvases.length + 1}`
-        const c = newCanvas(name)
+        const c = newCanvas(name, get().defaultCwd)
         set((s) => ({ canvases: [...s.canvases, c], activeCanvasId: c.id }))
         return c.id
       },
@@ -104,7 +106,7 @@ export const useCanvasStore = create<CanvasState>()(
         const src = get().canvases.find((c) => c.id === id)
         if (!src) return id
         const copy: CanvasDoc = {
-          ...newCanvas(`${src.name} copy`),
+          ...newCanvas(`${src.name} copy`, src.cwd),
           nodes: src.nodes.map((n) => ({ ...n, data: { ...n.data, ptyId: nanoid(8) } })),
           edges: src.edges.map((e) => ({ ...e }))
         }
@@ -115,6 +117,12 @@ export const useCanvasStore = create<CanvasState>()(
       setActiveCanvas: (id) => set({ activeCanvasId: id }),
 
       setDefaultCwd: (cwd) => set({ defaultCwd: cwd }),
+
+      setCanvasCwd: (id, cwd) =>
+        set((s) => ({
+          defaultCwd: cwd,
+          canvases: s.canvases.map((c) => (c.id === id ? { ...c, cwd } : c))
+        })),
 
       onNodesChange: (changes) =>
         set((s) => ({
@@ -337,8 +345,11 @@ export const useCanvasStore = create<CanvasState>()(
         defaultCwd: s.defaultCwd
       }),
       onRehydrateStorage: () => (state) => {
-        if (state && state.canvases.length > 0 && !state.activeCanvasId) {
-          state.activeCanvasId = state.canvases[0].id
+        if (!state || state.canvases.length === 0) return
+        if (!state.activeCanvasId) state.activeCanvasId = state.canvases[0].id
+        // migrate older persisted canvases that predate per-canvas cwd
+        for (const c of state.canvases) {
+          if (c.cwd === undefined || c.cwd === null) c.cwd = state.defaultCwd ?? ''
         }
       }
     }

@@ -35,7 +35,9 @@ export function CanvasView(): React.ReactElement {
   const onEdgesChange = useCanvasStore((s) => s.onEdgesChange)
   const setActiveCanvas = useCanvasStore((s) => s.setActiveCanvas)
   const addTerminalNode = useCanvasStore((s) => s.addTerminalNode)
-  const defaultCwd = useCanvasStore((s) => s.defaultCwd)
+  const defaultCwd = useCanvasStore(
+    (s) => (s.canvases.find((c) => c.id === s.activeCanvasId) ?? s.canvases[0])?.cwd ?? ''
+  )
 
   const [menu, setMenu] = useState<PaneMenuState | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
