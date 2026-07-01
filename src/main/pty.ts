@@ -1,4 +1,5 @@
 import { spawn, IPty } from 'node-pty'
+import { existsSync } from 'fs'
 import { BrowserWindow } from 'electron'
 import type { PtySpawnOptions } from '../shared/types'
 
@@ -35,7 +36,7 @@ export function spawnPty(opts: PtySpawnOptions): void {
     name: 'xterm-color',
     cols: opts.cols,
     rows: opts.rows,
-    cwd: opts.cwd && opts.cwd.length > 0 ? opts.cwd : process.cwd(),
+    cwd: opts.cwd && opts.cwd.length > 0 && existsSync(opts.cwd) ? opts.cwd : process.cwd(),
     env: { ...process.env, ...(opts.env ?? {}) } as Record<string, string>
   })
 

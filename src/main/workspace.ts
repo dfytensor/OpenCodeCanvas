@@ -4,7 +4,7 @@ import { join, dirname, relative } from 'path'
 import { mkdir, cp, rm, readdir, readFile, appendFile, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { isRepo } from './worktree'
-import type { ForkWorkspace } from '../shared/types'
+import type { ForkWorkspace, PrepareOptions, MergePrepareOptions } from '../shared/types'
 
 const run = promisify(execFile)
 const STORE_DIR = '.opencode-canvas'
@@ -70,58 +70,51 @@ merge it describes.
 `
 
 /**
- * Inject a branch-isolation rule into the copy so the forked agent stays inside
- * the workspace and uses relative paths. Appends to AGENTS.md (or CLAUDE.md if
- * that's what the project uses); creates AGENTS.md only when neither exists, to
- * avoid shadowing an existing CLAUDE.md.
+ * Inject a rule block (isolation/merge) into the workspace's agent-instructions
+ * file (AGENTS.md, or CLAUDE.md if that's what the project uses; creates
+ * AGENTS.md only when neither exists). Idempotent: skips if the signature is
+ * already present, so re-copying a parent workspace won't duplicate the rule.
  */
-async function injectIsolationRule(wsCopy: string): Promise<void> {
+async function injectRule(
+  wsCopy: string,
+  heading: string,
+  rule: string,
+  signature: string
+): Promise<void> {
   const agents = join(wsCopy, 'AGENTS.md')
   const claude = join(wsCopy, 'CLAUDE.md')
-  if (existsSync(agents)) {
-    await appendFile(agents, '\n' + ISOLATION_RULE)
-  } else if (existsSync(claude)) {
-    await appendFile(claude, '\n' + ISOLATION_RULE)
-  } else {
-    await writeFile(agents, '# Branch Workspace\n' + ISOLATION_RULE)
-  }
-}
-
-/** Inject a rule block (merge/isolation) into the project's agent-instructions file. */
-async function injectRule(wsCopy: string, heading: string, rule: string): Promise<void> {
-  const agents = join(wsCopy, 'AGENTS.md')
-  const claude = join(wsCopy, 'CLAUDE.md')
-  if (existsSync(agents)) {
-    await appendFile(agents, '\n' + rule)
-  } else if (existsSync(claude)) {
-    await appendFile(claude, '\n' + rule)
+  let target: string | null = null
+  if (existsSync(agents)) target = agents
+  else if (existsSync(claude)) target = claude
+  if (target) {
+    const content = await readFile(target, 'utf8')
+    if (!content.includes(signature)) await appendFile(target, '\n' + rule)
   } else {
     await writeFile(agents, `# ${heading}\n` + rule)
   }
 }
 
 /**
- * Prepare an isolated workspace for a fork by copying the project's CURRENT
- * state (including uncommitted changes). Two copies are made:
- *   - base snapshot (frozen fork-point; the diff baseline)
- *   - working copy  (where the branch's agent runs and edits)
- * This always captures the live working tree, so a forked conversation's
- * context matches the branch's file state.
+ * Prepare an isolated working folder by copying `srcDir` into
+ * `<mainRepoPath>/.opencode-canvas/<folder>/<dirName>`.
+ *
+ * `srcDir` is also recorded as the diff baseline (baseRef):
+ *   - root opencode terminal: srcDir = the project (mainRepoPath)
+ *   - fork:                    srcDir = the (frozen) parent working folder
+ *   - merge:                   srcDir = the project
+ * Because a forked-from parent is frozen, the parent folder is immutable and
+ * therefore serves as a stable baseline — no separate snapshot is needed.
  */
-export async function prepareForkWorkspace(
-  projectDir: string,
-  nodeId: string
-): Promise<ForkWorkspace> {
-  const shortId = nodeId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || 'fork'
-  const baseSnap = join(storeRoot(projectDir), 'snapshots', shortId)
-  const wsCopy = join(storeRoot(projectDir), 'copies', shortId)
-  await rm(baseSnap, { recursive: true, force: true })
-  await rm(wsCopy, { recursive: true, force: true })
-  await copyProject(projectDir, baseSnap)
-  await copyProject(projectDir, wsCopy)
-  await ensureGitignored(projectDir)
-  await injectIsolationRule(wsCopy)
-  return { path: wsCopy, type: 'copy', mainRepoPath: projectDir, baseRef: baseSnap }
+export async function prepare(opts: PrepareOptions): Promise<ForkWorkspace> {
+  const { srcDir, mainRepoPath, folder, dirName } = opts
+  if (!mainRepoPath) throw new Error('prepare: mainRepoPath is required')
+  if (!folder || !dirName) throw new Error('prepare: folder and dirName are required')
+  const dest = join(storeRoot(mainRepoPath), folder, dirName)
+  await rm(dest, { recursive: true, force: true })
+  await copyProject(srcDir, dest)
+  await ensureGitignored(mainRepoPath)
+  await injectRule(dest, 'Branch Workspace', ISOLATION_RULE, 'Branch Workspace (OpenCode Canvas)')
+  return { path: dest, type: 'copy', mainRepoPath, baseRef: srcDir }
 }
 
 const MAX_MERGE_DIFF_CHARS = 8000
@@ -132,35 +125,28 @@ function capDiff(s: string, max = MAX_MERGE_DIFF_CHARS): string {
 }
 
 /**
- * Prepare a MERGE workspace: a fresh isolated copy of the main project that an
- * OpenCode agent will turn into the merged result of several branches.
+ * Prepare a MERGE workspace: a fresh isolated copy of the project that an
+ * OpenCode agent turns into the merged result of several branches.
  *
- * The main project is copied twice (base snapshot + working copy) exactly like a
- * fork, so diff/apply-to-main work unchanged. For each source branch we compute
- * its diff vs its own fork point and write everything into MERGE_TASK.md, along
- * with the branch's absolute working-directory path (so the agent can read full
- * files). The agent then merges all sources into the working copy.
- *
- * Using "main project now" as the base means apply-to-main writes the net merged
- * result relative to the current main state.
+ * Layout: `<mainRepoPath>/.opencode-canvas/<folder>/<dirName>`. baseline
+ * (baseRef) = the project. For each source branch we compute its diff vs its own
+ * baseline and write everything (path + diff) into MERGE_TASK.md; the agent then
+ * merges all sources into the working copy.
  */
-export async function prepareMergeWorkspace(
+export async function prepareMerge(
   sources: ForkWorkspace[],
-  nodeId: string
+  opts: MergePrepareOptions
 ): Promise<ForkWorkspace> {
   if (!sources || sources.length < 2) {
     throw new Error('merge needs at least 2 source branches')
   }
-  const projectDir = sources[0].mainRepoPath
-  if (!projectDir) throw new Error('source branches have no main repo path')
+  const { mainRepoPath, folder, dirName } = opts
+  if (!mainRepoPath) throw new Error('prepareMerge: mainRepoPath is required')
+  if (!folder || !dirName) throw new Error('prepareMerge: folder and dirName are required')
 
-  const shortId = nodeId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || 'merge'
-  const baseSnap = join(storeRoot(projectDir), 'snapshots', shortId)
-  const wsCopy = join(storeRoot(projectDir), 'copies', shortId)
-  await rm(baseSnap, { recursive: true, force: true })
-  await rm(wsCopy, { recursive: true, force: true })
-  await copyProject(projectDir, baseSnap)
-  await copyProject(projectDir, wsCopy)
+  const dest = join(storeRoot(mainRepoPath), folder, dirName)
+  await rm(dest, { recursive: true, force: true })
+  await copyProject(mainRepoPath, dest)
 
   const sections: string[] = []
   for (let i = 0; i < sources.length; i++) {
@@ -174,7 +160,7 @@ export async function prepareMergeWorkspace(
     sections.push(
       `### Branch ${i + 1}\n` +
         `Working dir: \`${src.path}\`\n` +
-        `Changed files (diff vs this branch's fork point):\n` +
+        `Changed files (diff vs this branch's baseline):\n` +
         '```diff\n' +
         (capDiff(diff.trim()) || '(no changes detected / no baseline)') +
         '\n```\n'
@@ -199,11 +185,11 @@ export async function prepareMergeWorkspace(
     '- Write merged results to the current working directory using RELATIVE paths.\n' +
     '- When done, briefly summarize what you merged.\n'
 
-  await writeFile(join(wsCopy, 'MERGE_TASK.md'), task)
-  await injectRule(wsCopy, 'Merge Workspace', MERGE_RULE)
-  await ensureGitignored(projectDir)
+  await writeFile(join(dest, 'MERGE_TASK.md'), task)
+  await injectRule(dest, 'Merge Workspace', MERGE_RULE, 'Merge Workspace (OpenCode Canvas)')
+  await ensureGitignored(mainRepoPath)
 
-  return { path: wsCopy, type: 'copy', mainRepoPath: projectDir, baseRef: baseSnap }
+  return { path: dest, type: 'copy', mainRepoPath, baseRef: mainRepoPath }
 }
 
 /**
@@ -312,11 +298,12 @@ export async function applyWorkspaceToMain(
   }
 }
 
-/** Tear down a branch workspace (snapshot + working copy). */
+/** Tear down a branch workspace (its own working folder only). */
 export async function removeWorkspace(ws: ForkWorkspace): Promise<void> {
   try {
     await rm(ws.path, { recursive: true, force: true })
-    if (ws.baseRef) await rm(ws.baseRef, { recursive: true, force: true })
+    // NOTE: baseRef is NOT owned by this node — it is the parent folder or the
+    // project itself — so it must never be deleted here.
   } catch {
     // best-effort
   }

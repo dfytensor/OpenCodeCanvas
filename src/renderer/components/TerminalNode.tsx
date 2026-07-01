@@ -59,6 +59,7 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
   const deadRef = useRef(false)
   const spawnEpochRef = useRef(0)
   const kickoffRef = useRef(false)
+  const frozenRef = useRef(false)
 
   const [fullscreen, setFullscreen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -71,6 +72,22 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
   const applyFork = useCanvasStore((s) => s.applyFork)
   const addDiffNode = useCanvasStore((s) => s.addDiffNode)
   const updateNodeData = useCanvasStore((s) => s.updateNodeData)
+
+  // A terminal that has been forked/merged-from is FROZEN: it can only spawn
+  // more forks, it cannot continue the conversation (input is locked).
+  const hasChildren = useCanvasStore((s) =>
+    s.canvases.some((c) =>
+      c.edges.some((e) => {
+        if (e.source !== id) return false
+        const k = (e.data as { kind?: string } | undefined)?.kind
+        return k === 'fork' || k === 'merge'
+      })
+    )
+  )
+  const frozen = data.mode === 'opencode' && hasChildren
+  useEffect(() => {
+    frozenRef.current = frozen
+  }, [frozen])
 
   function attachTo(container: HTMLElement): AttachResult {
     const terminal = new Terminal({
@@ -99,6 +116,7 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
     serializeRef.current = serialize
 
     const onDataDisp = terminal.onData((d) => {
+      if (frozenRef.current) return
       window.electronAPI.pty.input(data.ptyId, d)
     })
 
@@ -130,11 +148,13 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
     const command = isOc ? 'opencode' : undefined
     let args: string[] = []
     if (isOc) {
-      if (data.forkParentSession) {
-        // session branch: fork the parent conversation into a new session and continue it
-        args = ['--session', data.forkParentSession, '--fork']
-      } else if (data.sessionId) {
+      if (data.sessionId) {
+        // resume a specific session in this terminal's cwd (forks use the
+        // session that was imported into this folder; roots detect their own)
         args = ['--session', data.sessionId]
+      } else if (data.forkParentSession) {
+        // legacy session branch: fork the parent conversation
+        args = ['--session', data.forkParentSession, '--fork']
       }
     }
     setStatus('starting')
@@ -316,8 +336,8 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
         const isOc = data.mode === 'opencode'
         let args: string[] = []
         if (isOc) {
-          if (data.forkParentSession) args = ['--session', data.forkParentSession, '--fork']
-          else if (data.sessionId) args = ['--session', data.sessionId]
+          if (data.sessionId) args = ['--session', data.sessionId]
+          else if (data.forkParentSession) args = ['--session', data.forkParentSession, '--fork']
         }
         window.electronAPI.pty
           .spawn({ ptyId: data.ptyId, cwd: data.cwd, cols: 100, rows: 26, command: isOc ? 'opencode' : undefined, args })
@@ -371,6 +391,14 @@ export function TerminalNode({ id, data, selected }: NodeProps<TermNode>): React
           {data.kind === 'merge' && (
             <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-green-400">
               merge
+            </span>
+          )}
+          {frozen && (
+            <span
+              className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400"
+              title="This branch has been forked — input locked. You can still fork from it."
+            >
+              frozen
             </span>
           )}
           <span

@@ -35,6 +35,7 @@ export function CanvasView(): React.ReactElement {
   const onEdgesChange = useCanvasStore((s) => s.onEdgesChange)
   const setActiveCanvas = useCanvasStore((s) => s.setActiveCanvas)
   const addTerminalNode = useCanvasStore((s) => s.addTerminalNode)
+  const addOpencodeNode = useCanvasStore((s) => s.addOpencodeNode)
   const mergeNodes = useCanvasStore((s) => s.mergeNodes)
   const defaultCwd = useCanvasStore(
     (s) => (s.canvases.find((c) => c.id === s.activeCanvasId) ?? s.canvases[0])?.cwd ?? ''
@@ -62,19 +63,20 @@ export function CanvasView(): React.ReactElement {
   }, [activeCanvasId])
 
   const addAtCenter = useCallback(
-    (mode: AddMode): void => {
+    async (mode: AddMode): Promise<void> => {
       const wrap = wrapperRef.current
       const center = wrap
         ? { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2 }
         : { x: 400, y: 300 }
       const flow = rf.screenToFlowPosition(center)
-      addTerminalNode({
-        position: { x: flow.x - 310, y: flow.y - 170 },
-        mode,
-        cwd: defaultCwd
-      })
+      const position = { x: flow.x - 310, y: flow.y - 170 }
+      if (mode === 'opencode') {
+        await addOpencodeNode(position, defaultCwd)
+      } else {
+        addTerminalNode({ position, mode, cwd: defaultCwd })
+      }
     },
-    [addTerminalNode, defaultCwd, rf]
+    [addOpencodeNode, addTerminalNode, defaultCwd, rf]
   )
 
   // toolbar "add" events
@@ -115,11 +117,10 @@ export function CanvasView(): React.ReactElement {
       icon: '◉',
       disabled: defaultCwd.length === 0,
       onSelect: () =>
-        addTerminalNode({
-          position: { x: menu!.flow.x - 310, y: menu!.flow.y - 170 },
-          mode: 'opencode',
-          cwd: defaultCwd
-        })
+        void addOpencodeNode(
+          { x: menu!.flow.x - 310, y: menu!.flow.y - 170 },
+          defaultCwd
+        )
     },
     {
       id: 'add-shell',

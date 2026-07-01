@@ -12,6 +12,8 @@ export interface TerminalNodeData {
   // merge lineage: the node ids of the branches this node merged together
   mergeFrom?: string[]
   cwd: string
+  // readable working-folder name within the canvas folder, e.g. "opencode2"
+  dirName?: string
   title: string
   ptyId: string
   // file-level isolation (roadmap #4)
@@ -49,6 +51,25 @@ export interface PtySpawnOptions {
   env?: Record<string, string>
 }
 
+/**
+ * Prepare an isolated working folder by copying `srcDir` into
+ * `<mainRepoPath>/.opencode-canvas/<folder>/<dirName>`.
+ * `srcDir` also becomes the diff baseline (baseRef): for a root terminal it's the
+ * project; for a fork it's the (frozen) parent folder; for a merge it's the project.
+ */
+export interface PrepareOptions {
+  srcDir: string
+  mainRepoPath: string
+  folder: string
+  dirName: string
+}
+
+export interface MergePrepareOptions {
+  mainRepoPath: string
+  folder: string
+  dirName: string
+}
+
 export interface CanvasNodeSnapshot {
   id: string
   type: string
@@ -78,6 +99,7 @@ export interface ElectronAPI {
     sessionList: (cwd?: string) => Promise<any[]>
     detectSession: (cwd: string) => Promise<string | null>
     run: (cwd: string, args: string[]) => Promise<string>
+    forkIntoDir: (parentSessionId: string, parentCwd: string, destDir: string) => Promise<string>
   }
   git: {
     worktreeAdd: (repoPath: string, branchName: string) => Promise<string>
@@ -86,8 +108,8 @@ export interface ElectronAPI {
     diff: (worktree: string, base?: string) => Promise<string>
   }
   workspace: {
-    prepare: (projectDir: string, nodeId: string) => Promise<ForkWorkspace>
-    prepareMerge: (sources: ForkWorkspace[], nodeId: string) => Promise<ForkWorkspace>
+    prepare: (opts: PrepareOptions) => Promise<ForkWorkspace>
+    prepareMerge: (sources: ForkWorkspace[], opts: MergePrepareOptions) => Promise<ForkWorkspace>
     diff: (ws: ForkWorkspace) => Promise<string>
     apply: (ws: ForkWorkspace) => Promise<{ ok: boolean; message: string }>
     remove: (ws: ForkWorkspace) => Promise<void>

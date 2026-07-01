@@ -20,6 +20,7 @@ export interface CanvasDoc {
   id: string
   name: string
   cwd: string
+  folder?: string
   nodes: Node[]
   edges: Edge[]
 }
@@ -31,6 +32,7 @@ interface AddTerminalParams {
   cwd: string
   title?: string
   kind?: NodeKind
+  sessionId?: string
   width?: number
   height?: number
 }
@@ -54,6 +56,7 @@ interface CanvasState {
   onEdgesChange: OnEdgesChange
   onConnect: (c: Connection) => void
   addTerminalNode: (params: AddTerminalParams) => string
+  addOpencodeNode: (position: XYPosition, srcCwd: string) => Promise<string>
   addDiffNode: (sourceNodeId: string) => string
   removeNode: (nodeId: string) => void
   updateNodeData: (nodeId: string, patch: Record<string, unknown>) => void
@@ -68,6 +71,29 @@ function newCanvas(name: string, cwd = ''): CanvasDoc {
 
 function activeOf(state: CanvasState): CanvasDoc {
   return state.canvases.find((c) => c.id === state.activeCanvasId) ?? state.canvases[0]
+}
+
+/** Filesystem-safe, readable, stable folder name for a canvas (name + id suffix). */
+function canvasSlug(name: string, id: string): string {
+  const base = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
+    .replace(/\s+/g, '')
+    .trim()
+  const safe = base.length > 0 ? base.slice(0, 40) : 'canvas'
+  const short = id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6) || 'xxxxxx'
+  return `${safe}-${short}`
+}
+
+/** Next sequential working-folder name (opencode1, opencode2, ...) in a canvas. */
+function nextDirName(canvas: CanvasDoc): string {
+  let max = 0
+  for (const n of canvas.nodes) {
+    const d = n.data as TerminalNodeData
+    if (d.mode !== 'opencode') continue
+    const m = /^opencode(\d+)$/.exec(d.dirName ?? '')
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `opencode${max + 1}`
 }
 
 export const useCanvasStore = create<CanvasState>()(
@@ -155,12 +181,13 @@ export const useCanvasStore = create<CanvasState>()(
         cwd,
         title,
         kind = 'main',
+        sessionId = '',
         width = 620,
         height = 340
       }) => {
         const nodeId = id ?? nanoid(10)
         const data: TerminalNodeData = {
-          sessionId: '',
+          sessionId,
           mode,
           kind,
           cwd,
@@ -182,6 +209,52 @@ export const useCanvasStore = create<CanvasState>()(
           )
         }))
         return nodeId
+      },
+
+      addOpencodeNode: async (position, srcCwd) => {
+        // A root opencode node gets its OWN isolated working folder: a fresh copy
+        // of the project at <store>/<canvas-folder>/opencode<N>. opencode runs in
+        // it. Forks later copy THIS folder.
+        const newId = nanoid(10)
+        const canvas = activeOf(get())
+        const folder = canvas.folder ?? canvasSlug(canvas.name, canvas.id)
+        if (!canvas.folder) {
+          const f = folder
+          set((s) => ({
+            canvases: s.canvases.map((c) => (c.id === canvas.id ? { ...c, folder: f } : c))
+          }))
+        }
+        const dirName = nextDirName(canvas)
+        let ws: ForkWorkspace | null = null
+        if (srcCwd) {
+          try {
+            ws = await window.electronAPI.workspace.prepare({
+              srcDir: srcCwd,
+              mainRepoPath: srcCwd,
+              folder,
+              dirName
+            })
+          } catch {
+            ws = null
+          }
+        }
+        get().addTerminalNode({
+          id: newId,
+          position,
+          mode: 'opencode',
+          cwd: ws?.path ?? srcCwd,
+          kind: 'main'
+        })
+        if (ws) {
+          get().updateNodeData(newId, {
+            workspaceType: ws.type,
+            branchName: ws.branchName,
+            mainRepoPath: ws.mainRepoPath,
+            baseSnapshotPath: ws.baseRef,
+            dirName
+          })
+        }
+        return newId
       },
 
       addDiffNode: (sourceNodeId) => {
@@ -266,14 +339,47 @@ export const useCanvasStore = create<CanvasState>()(
           throw new Error('Source node has no session yet — wait for OpenCode to start before forking.')
         }
         const newId = nanoid(10)
+        const canvas = activeOf(s)
+        const folder = canvas.folder ?? canvasSlug(canvas.name, canvas.id)
+        if (!canvas.folder) {
+          const f = folder
+          set((st) => ({
+            canvases: st.canvases.map((c) => (c.id === canvas.id ? { ...c, folder: f } : c))
+          }))
+        }
+        const dirName = nextDirName(canvas)
 
-        // file-level isolation: git worktree if available, else a self-built
-        // snapshot copy. Falls back to shared cwd so session branching always works.
+        // copy the PARENT's working folder as the fork's working folder. baseline
+        // (baseRef) = the parent folder, which is frozen once this fork exists, so
+        // it doubles as a stable diff baseline. Falls back to shared cwd on error.
         let ws: ForkWorkspace | null = null
         try {
-          ws = await window.electronAPI.workspace.prepare(srcData.cwd, newId)
+          ws = await window.electronAPI.workspace.prepare({
+            srcDir: srcData.cwd,
+            mainRepoPath: srcData.mainRepoPath ?? srcData.cwd,
+            folder,
+            dirName
+          })
         } catch {
           ws = null
+        }
+
+        // Copy the parent's CONVERSATION into the new folder. opencode's
+        // --session --fork ties the session to the parent's directory (cwd is
+        // ignored), so we export → rewrite id → import from destDir, which binds
+        // a fresh session (with full history) to the new folder. Best-effort: on
+        // failure the fork still gets file isolation, just without the history.
+        let forkedSessionId = ''
+        if (ws) {
+          try {
+            forkedSessionId = await window.electronAPI.opencode.forkIntoDir(
+              srcData.sessionId,
+              srcData.cwd,
+              ws.path
+            )
+          } catch {
+            forkedSessionId = ''
+          }
         }
 
         const newPos = {
@@ -286,17 +392,18 @@ export const useCanvasStore = create<CanvasState>()(
           mode: 'opencode',
           cwd: ws?.path ?? srcData.cwd,
           title: 'fork',
-          kind: 'fork'
+          kind: 'fork',
+          sessionId: forkedSessionId
         })
         get().updateNodeData(newId, {
           forkFrom: nodeId,
-          forkParentSession: srcData.sessionId,
           ...(ws
             ? {
                 workspaceType: ws.type,
                 branchName: ws.branchName,
                 mainRepoPath: ws.mainRepoPath,
-                baseSnapshotPath: ws.baseRef
+                baseSnapshotPath: ws.baseRef,
+                dirName
               }
             : {})
         })
@@ -346,9 +453,18 @@ export const useCanvasStore = create<CanvasState>()(
         }
 
         const newId = nanoid(10)
+        const folder = active.folder ?? canvasSlug(active.name, active.id)
+        if (!active.folder) {
+          const f = folder
+          set((st) => ({
+            canvases: st.canvases.map((c) => (c.id === active.id ? { ...c, folder: f } : c))
+          }))
+        }
+        const dirName = nextDirName(active)
+        const mainRepoPath = eligible[0].ws.mainRepoPath
         const ws = await window.electronAPI.workspace.prepareMerge(
           eligible.map((e) => e.ws),
-          newId
+          { mainRepoPath, folder, dirName }
         )
 
         const ax = eligible.reduce((a, e) => a + e.node.position.x, 0) / eligible.length
@@ -366,7 +482,8 @@ export const useCanvasStore = create<CanvasState>()(
           workspaceType: ws.type,
           branchName: ws.branchName,
           mainRepoPath: ws.mainRepoPath,
-          baseSnapshotPath: ws.baseRef
+          baseSnapshotPath: ws.baseRef,
+          dirName
         })
         const srcIds = eligible.map((e) => e.node.id)
         set((st) => ({

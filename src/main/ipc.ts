@@ -1,9 +1,9 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { spawnPty, writePty, resizePty, killPty } from './pty'
-import { sessionList, detectSession, runRaw } from './opencode'
+import { sessionList, detectSession, runRaw, forkSessionIntoDir } from './opencode'
 import { worktreeAdd, worktreeRemove, isRepo, gitDiff } from './worktree'
-import { prepareForkWorkspace, prepareMergeWorkspace, diffWorkspace, applyWorkspaceToMain, removeWorkspace } from './workspace'
-import type { PtySpawnOptions, ForkWorkspace } from '../shared/types'
+import { prepare, prepareMerge, diffWorkspace, applyWorkspaceToMain, removeWorkspace } from './workspace'
+import type { PtySpawnOptions, ForkWorkspace, PrepareOptions, MergePrepareOptions } from '../shared/types'
 
 export function registerIpc(): void {
   // ---- pty ----
@@ -39,6 +39,13 @@ export function registerIpc(): void {
     return runRaw(cwd, args)
   })
 
+  ipcMain.handle(
+    'opencode:forkIntoDir',
+    async (_e, parentSessionId: string, parentCwd: string, destDir: string) => {
+      return forkSessionIntoDir(parentSessionId, parentCwd, destDir)
+    }
+  )
+
   // ---- git ----
   ipcMain.handle('git:worktreeAdd', async (_e, repoPath: string, branchName: string) => {
     return worktreeAdd(repoPath, branchName)
@@ -57,12 +64,12 @@ export function registerIpc(): void {
   })
 
   // ---- workspace isolation (file-level branching) ----
-  ipcMain.handle('workspace:prepare', async (_e, projectDir: string, nodeId: string) => {
-    return prepareForkWorkspace(projectDir, nodeId)
+  ipcMain.handle('workspace:prepare', async (_e, opts: PrepareOptions) => {
+    return prepare(opts)
   })
 
-  ipcMain.handle('workspace:prepareMerge', async (_e, sources: ForkWorkspace[], nodeId: string) => {
-    return prepareMergeWorkspace(sources, nodeId)
+  ipcMain.handle('workspace:prepareMerge', async (_e, sources: ForkWorkspace[], opts: MergePrepareOptions) => {
+    return prepareMerge(sources, opts)
   })
 
   ipcMain.handle('workspace:diff', async (_e, ws: ForkWorkspace) => {

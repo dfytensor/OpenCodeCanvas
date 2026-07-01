@@ -21,7 +21,9 @@ const api: ElectronAPI = {
   opencode: {
     sessionList: (cwd?: string) => ipcRenderer.invoke('opencode:sessionList', cwd),
     detectSession: (cwd) => ipcRenderer.invoke('opencode:detectSession', cwd),
-    run: (cwd, args) => ipcRenderer.invoke('opencode:run', cwd, args)
+    run: (cwd, args) => ipcRenderer.invoke('opencode:run', cwd, args),
+    forkIntoDir: (parentSessionId, parentCwd, destDir) =>
+      ipcRenderer.invoke('opencode:forkIntoDir', parentSessionId, parentCwd, destDir)
   },
   git: {
     worktreeAdd: (repoPath, branchName) =>
@@ -31,10 +33,9 @@ const api: ElectronAPI = {
     diff: (worktree, base) => ipcRenderer.invoke('git:diff', worktree, base)
   },
   workspace: {
-    prepare: (projectDir, nodeId) =>
-      ipcRenderer.invoke('workspace:prepare', projectDir, nodeId),
-    prepareMerge: (sources, nodeId) =>
-      ipcRenderer.invoke('workspace:prepareMerge', sources, nodeId),
+    prepare: (opts) => ipcRenderer.invoke('workspace:prepare', opts),
+    prepareMerge: (sources, opts) =>
+      ipcRenderer.invoke('workspace:prepareMerge', sources, opts),
     diff: (ws) => ipcRenderer.invoke('workspace:diff', ws),
     apply: (ws) => ipcRenderer.invoke('workspace:apply', ws),
     remove: (ws) => ipcRenderer.invoke('workspace:remove', ws)
