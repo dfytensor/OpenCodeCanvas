@@ -14,7 +14,7 @@ import {
   type Connection,
   type XYPosition
 } from '@xyflow/react'
-import type { TerminalNodeData, TerminalMode, NodeKind, DiffNodeData, ForkWorkspace } from '../../shared/types'
+import type { TerminalNodeData, TerminalMode, NodeKind, DiffNodeData, ForkWorkspace, MergeSource } from '../../shared/types'
 
 export interface CanvasDoc {
   id: string
@@ -94,6 +94,47 @@ function nextDirName(canvas: CanvasDoc): string {
     if (m) max = Math.max(max, parseInt(m[1], 10))
   }
   return `opencode${max + 1}`
+}
+
+/** Parent id of a node in the fork/merge tree (forkFrom, else first mergeFrom). */
+function parentIdOf(canvas: CanvasDoc, id: string): string | undefined {
+  const n = canvas.nodes.find((x) => x.id === id)
+  if (!n) return undefined
+  const d = n.data as TerminalNodeData
+  return d.forkFrom ?? (d.mergeFrom && d.mergeFrom.length ? d.mergeFrom[0] : undefined)
+}
+
+/** Lowest common ancestor of several nodes (pairwise reduction). */
+function findLCA(canvas: CanvasDoc, ids: string[]): string | null {
+  if (ids.length === 0) return null
+  const chainOf = (start: string): string[] => {
+    const chain: string[] = []
+    const seen = new Set<string>()
+    let cur = start
+    while (cur && !seen.has(cur)) {
+      seen.add(cur)
+      chain.push(cur)
+      cur = parentIdOf(canvas, cur) ?? ''
+    }
+    return chain
+  }
+  const lcaTwo = (a: string, b: string): string | null => {
+    const setA = new Set(chainOf(a))
+    const seen = new Set<string>()
+    let cur = b
+    while (cur && !seen.has(cur)) {
+      seen.add(cur)
+      if (setA.has(cur)) return cur
+      cur = parentIdOf(canvas, cur) ?? ''
+    }
+    return null
+  }
+  let cur = ids[0]
+  for (let i = 1; i < ids.length; i++) {
+    cur = lcaTwo(cur, ids[i]) ?? ''
+    if (!cur) return null
+  }
+  return cur || null
 }
 
 export const useCanvasStore = create<CanvasState>()(
@@ -462,10 +503,50 @@ export const useCanvasStore = create<CanvasState>()(
         }
         const dirName = nextDirName(active)
         const mainRepoPath = eligible[0].ws.mainRepoPath
-        const ws = await window.electronAPI.workspace.prepareMerge(
-          eligible.map((e) => e.ws),
-          { mainRepoPath, folder, dirName }
-        )
+
+        // common ancestor (LCA) of the sources: its folder becomes the merge
+        // base (the merge folder root starts as a copy of it), and its session
+        // history is copied into the merge session.
+        const lcaId = findLCA(active, eligible.map((e) => e.node.id))
+        const ancestorNode = lcaId ? active.nodes.find((n) => n.id === lcaId) : undefined
+        const ancestorData = ancestorNode?.data as TerminalNodeData | undefined
+        const ancestorWs: ForkWorkspace | undefined =
+          ancestorData && ancestorData.cwd && ancestorData.workspaceType
+            ? {
+                path: ancestorData.cwd,
+                type: ancestorData.workspaceType,
+                branchName: ancestorData.branchName,
+                mainRepoPath: ancestorData.mainRepoPath ?? ancestorData.cwd,
+                baseRef: ancestorData.baseSnapshotPath
+              }
+            : undefined
+
+        const sources: MergeSource[] = eligible.map((e) => ({
+          ws: e.ws,
+          dirName: (e.node.data as TerminalNodeData).dirName ?? e.node.id
+        }))
+
+        const ws = await window.electronAPI.workspace.prepareMerge(sources, {
+          mainRepoPath,
+          folder,
+          dirName,
+          ancestor: ancestorWs
+        })
+
+        // copy the ancestor's CONVERSATION history into the merge folder, so the
+        // merge session carries the shared context the branches forked from.
+        let mergeSessionId = ''
+        if (ancestorData && ancestorData.sessionId && ancestorWs) {
+          try {
+            mergeSessionId = await window.electronAPI.opencode.forkIntoDir(
+              ancestorData.sessionId,
+              ancestorWs.path,
+              ws.path
+            )
+          } catch {
+            mergeSessionId = ''
+          }
+        }
 
         const ax = eligible.reduce((a, e) => a + e.node.position.x, 0) / eligible.length
         const ay = eligible.reduce((a, e) => a + e.node.position.y, 0) / eligible.length
@@ -475,7 +556,8 @@ export const useCanvasStore = create<CanvasState>()(
           mode: 'opencode',
           cwd: ws.path,
           title: 'merge',
-          kind: 'merge'
+          kind: 'merge',
+          sessionId: mergeSessionId
         })
         get().updateNodeData(newId, {
           mergeFrom: eligible.map((e) => e.node.id),

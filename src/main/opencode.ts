@@ -1,8 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { randomBytes } from 'crypto'
-import { writeFile, rm } from 'fs/promises'
 import { existsSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { shortId } from './worktree'
@@ -61,44 +60,82 @@ export async function forkSession(parentSessionId: string, cwd: string): Promise
   return newId
 }
 
-/** Generate an opencode-style session id (ses_ + 24 base36 chars). */
-function newSessionId(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  const bytes = randomBytes(24)
-  let s = ''
-  for (let i = 0; i < 24; i++) s += alphabet[bytes[i] % alphabet.length]
-  return 'ses_' + s
-}
-
 /**
- * Copy a session's CONVERSATION into a different working directory.
+ * Copy a session's CONVERSATION (full message history) into a different working
+ * directory, INSTANTLY and without any LLM call.
  *
- * opencode's `--session <id> --fork` ties the new session to the PARENT's
- * directory (cwd is ignored), so it can't be used for directory-isolated forks.
- * Instead we export the parent, rewrite the session id (so import creates a NEW
- * session instead of overwriting the parent), and import it from destDir —
- * opencode binds the imported session to the cwd it's run from. Returns the new
- * session id (already bound to destDir, with the full history).
+ * Why this way: opencode's `--session <id> --fork` copies history but binds the
+ * fork to the PARENT's directory (cwd ignored) AND requires an LLM round-trip
+ * (slow / can hang). `opencode import` drops messages entirely. So we copy the
+ * session + message + part (+ session_message + context epoch) rows directly in
+ * opencode's SQLite (opencode.db) with fresh ids and the new directory. The
+ * `data` JSON columns are self-contained (no cross-row id references), so no
+ * JSON surgery is needed — only session_id / message_id remapping.
+ *
+ * Runs under the system `node` (Electron's Node lacks node:sqlite) via a small
+ * script written to the temp dir.
  */
+const DBOP_SCRIPT = join(tmpdir(), 'opencode-canvas-dbop.js')
+let dbopReady = false
+const DBOP_CODE = `
+const { DatabaseSync } = require('node:sqlite')
+const crypto = require('crypto')
+const os = require('os'), path = require('path')
+const [, , parentSessionId, newDir] = process.argv
+const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share')
+const db = new DatabaseSync(path.join(base, 'opencode', 'opencode.db'))
+db.exec('PRAGMA busy_timeout = 5000')
+const BS = String.fromCharCode(92)
+const norm = (p) => p.split(BS).join('/')
+function newId(prefix){const a='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';const b=crypto.randomBytes(24);let s='';for(let i=0;i<24;i++)s+=a[b[i]%a.length];return prefix+s}
+const parent = db.prepare('SELECT * FROM session WHERE id=?').get(parentSessionId)
+if(!parent){db.close();console.log('');process.exit(0)}
+const sid = newId('ses_')
+const now = Date.now()
+let newPath = norm(newDir).replace(/^[A-Za-z]:/, '')
+if (newPath.charAt(0) === '/') newPath = newPath.slice(1)
+const overrides = { id: sid, directory: norm(newDir), path: newPath, parent_id: parentSessionId, time_created: now, time_updated: now }
+db.exec('BEGIN')
+try {
+  const cols = Object.keys(parent)
+  const vals = cols.map((c) => (overrides[c] !== undefined ? overrides[c] : parent[c]))
+  db.prepare('INSERT INTO session (' + cols.join(',') + ') VALUES (' + cols.map(() => '?').join(',') + ')').run(...vals)
+  const msgMap = new Map()
+  for (const m of db.prepare('SELECT * FROM message WHERE session_id=?').all(parentSessionId)) {
+    const nm = newId('msg_'); msgMap.set(m.id, nm)
+    db.prepare('INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)').run(nm, sid, m.time_created, m.time_updated, m.data)
+  }
+  for (const p of db.prepare('SELECT * FROM part WHERE session_id=?').all(parentSessionId)) {
+    db.prepare('INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)').run(newId('prt_'), msgMap.get(p.message_id), sid, p.time_created, p.time_updated, p.data)
+  }
+  for (const s of db.prepare('SELECT * FROM session_message WHERE session_id=?').all(parentSessionId)) {
+    db.prepare('INSERT INTO session_message (id, session_id, type, time_created, time_updated, data, seq) VALUES (?,?,?,?,?,?,?)').run(newId('msg_'), sid, s.type, s.time_created, s.time_updated, s.data, s.seq)
+  }
+  const ep = db.prepare('SELECT * FROM session_context_epoch WHERE session_id=?').get(parentSessionId)
+  if (ep) db.prepare('INSERT INTO session_context_epoch (session_id, baseline, snapshot, baseline_seq) VALUES (?,?,?,?)').run(sid, ep.baseline, ep.snapshot, ep.baseline_seq)
+  db.exec('COMMIT')
+} catch (e) {
+  db.exec('ROLLBACK'); db.close(); throw e
+}
+db.close()
+console.log(sid)
+`
+
 export async function forkSessionIntoDir(
   parentSessionId: string,
-  parentCwd: string,
+  _parentCwd: string,
   destDir: string
 ): Promise<string> {
-  const json = await oc(['export', parentSessionId], { cwd: parentCwd })
-  const newId = newSessionId()
-  const rewritten = json.split(parentSessionId).join(newId)
-  const tmp = join(tmpdir(), `canvas-fork-${newId}.json`)
-  await writeFile(tmp, rewritten, 'utf8')
-  try {
-    const out = await oc(['import', tmp], { cwd: destDir })
-    if (!out.includes(newId)) {
-      throw new Error('import did not create the forked session: ' + out.trim())
-    }
-  } finally {
-    await rm(tmp, { force: true })
+  if (!dbopReady) {
+    await writeFile(DBOP_SCRIPT, DBOP_CODE, 'utf8')
+    dbopReady = true
   }
-  return newId
+  const { stdout } = await run('node', [DBOP_SCRIPT, parentSessionId, destDir], {
+    windowsHide: true
+  })
+  const id = stdout.trim()
+  if (!id) throw new Error('could not copy session history into the new directory')
+  return id
 }
 
 /**

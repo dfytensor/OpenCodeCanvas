@@ -68,6 +68,14 @@ export interface MergePrepareOptions {
   mainRepoPath: string
   folder: string
   dirName: string
+  /** common ancestor workspace; the merge folder root starts as a copy of it */
+  ancestor?: ForkWorkspace
+}
+
+/** A source branch for a merge: its workspace + the name for the nested copy. */
+export interface MergeSource {
+  ws: ForkWorkspace
+  dirName: string
 }
 
 export interface CanvasNodeSnapshot {
@@ -109,7 +117,7 @@ export interface ElectronAPI {
   }
   workspace: {
     prepare: (opts: PrepareOptions) => Promise<ForkWorkspace>
-    prepareMerge: (sources: ForkWorkspace[], opts: MergePrepareOptions) => Promise<ForkWorkspace>
+    prepareMerge: (sources: MergeSource[], opts: MergePrepareOptions) => Promise<ForkWorkspace>
     diff: (ws: ForkWorkspace) => Promise<string>
     apply: (ws: ForkWorkspace) => Promise<{ ok: boolean; message: string }>
     remove: (ws: ForkWorkspace) => Promise<void>

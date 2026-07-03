@@ -3,7 +3,7 @@ import { spawnPty, writePty, resizePty, killPty } from './pty'
 import { sessionList, detectSession, runRaw, forkSessionIntoDir } from './opencode'
 import { worktreeAdd, worktreeRemove, isRepo, gitDiff } from './worktree'
 import { prepare, prepareMerge, diffWorkspace, applyWorkspaceToMain, removeWorkspace } from './workspace'
-import type { PtySpawnOptions, ForkWorkspace, PrepareOptions, MergePrepareOptions } from '../shared/types'
+import type { PtySpawnOptions, ForkWorkspace, PrepareOptions, MergePrepareOptions, MergeSource } from '../shared/types'
 
 export function registerIpc(): void {
   // ---- pty ----
@@ -68,7 +68,7 @@ export function registerIpc(): void {
     return prepare(opts)
   })
 
-  ipcMain.handle('workspace:prepareMerge', async (_e, sources: ForkWorkspace[], opts: MergePrepareOptions) => {
+  ipcMain.handle('workspace:prepareMerge', async (_e, sources: MergeSource[], opts: MergePrepareOptions) => {
     return prepareMerge(sources, opts)
   })
 

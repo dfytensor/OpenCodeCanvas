@@ -4,7 +4,7 @@ import { join, dirname, relative } from 'path'
 import { mkdir, cp, rm, readdir, readFile, appendFile, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { isRepo } from './worktree'
-import type { ForkWorkspace, PrepareOptions, MergePrepareOptions } from '../shared/types'
+import type { ForkWorkspace, PrepareOptions, MergePrepareOptions, MergeSource } from '../shared/types'
 
 const run = promisify(execFile)
 const STORE_DIR = '.opencode-canvas'
@@ -125,16 +125,22 @@ function capDiff(s: string, max = MAX_MERGE_DIFF_CHARS): string {
 }
 
 /**
- * Prepare a MERGE workspace: a fresh isolated copy of the project that an
- * OpenCode agent turns into the merged result of several branches.
+ * Prepare a MERGE workspace.
  *
- * Layout: `<mainRepoPath>/.opencode-canvas/<folder>/<dirName>`. baseline
- * (baseRef) = the project. For each source branch we compute its diff vs its own
- * baseline and write everything (path + diff) into MERGE_TASK.md; the agent then
- * merges all sources into the working copy.
+ * Layout: `<mainRepoPath>/.opencode-canvas/<folder>/<dirName>` (the merge root).
+ *   - The ROOT starts as a copy of the COMMON ANCESTOR (the shared baseline both
+ *     branches forked from), so the agent only has to apply each branch's
+ *     changes. If no ancestor is known, fall back to the project.
+ *   - Each source branch is copied IN as a nested subdirectory named by its
+ *     dirName (e.g. opencode5/opencode2/, opencode5/opencode3/), so the agent
+ *     has the full files of every branch locally (no absolute-path references).
+ *   - MERGE_TASK.md lists each branch's subdir + its diff vs the ancestor.
+ *
+ * baseline (baseRef) = the ancestor (or project). The merge session's history is
+ * filled in separately (by the store) via export→import of the ancestor session.
  */
 export async function prepareMerge(
-  sources: ForkWorkspace[],
+  sources: MergeSource[],
   opts: MergePrepareOptions
 ): Promise<ForkWorkspace> {
   if (!sources || sources.length < 2) {
@@ -146,74 +152,83 @@ export async function prepareMerge(
 
   const dest = join(storeRoot(mainRepoPath), folder, dirName)
   await rm(dest, { recursive: true, force: true })
-  await copyProject(mainRepoPath, dest)
+
+  // root = common ancestor copy (merge base), else the project
+  const ancestorPath = opts.ancestor ? opts.ancestor.path : mainRepoPath
+  await copyProject(ancestorPath, dest)
+
+  // nest a full copy of every source branch inside the merge folder
+  for (const s of sources) {
+    await copyProject(s.ws.path, join(dest, s.dirName))
+  }
 
   const sections: string[] = []
   for (let i = 0; i < sources.length; i++) {
-    const src = sources[i]
+    const s = sources[i]
     let diff = ''
     try {
-      diff = src.baseRef ? await diffWorkspace(src) : ''
+      diff = await diffDirs(ancestorPath, s.ws.path)
     } catch {
       diff = ''
     }
     sections.push(
-      `### Branch ${i + 1}\n` +
-        `Working dir: \`${src.path}\`\n` +
-        `Changed files (diff vs this branch's baseline):\n` +
+      `### Branch ${i + 1} (\`${s.dirName}/\`)\n` +
+        `Full copy at: \`${s.dirName}/\`\n` +
+        `Changes vs the shared baseline:\n` +
         '```diff\n' +
-        (capDiff(diff.trim()) || '(no changes detected / no baseline)') +
+        (capDiff(diff.trim()) || '(no changes detected)') +
         '\n```\n'
     )
   }
 
   const task =
     '# Merge Task (OpenCode Canvas)\n\n' +
-    'You are in a MERGE WORKSPACE. Your job is to combine the changes from the\n' +
-    'branch working directories below into THIS directory (the current working\n' +
-    'directory).\n\n' +
+    'You are in a MERGE WORKSPACE. The current directory is a copy of the shared\n' +
+    'baseline that all branches forked from. Each branch has been copied in as a\n' +
+    'subdirectory (see below). Your job: combine ALL branches\' changes into the\n' +
+    'CURRENT directory (the root), producing the merged project here.\n\n' +
     '## Source branches\n\n' +
     sections.join('\n') +
     '\n## Rules\n' +
-    "- Merge ALL listed branches' changes into the current directory.\n" +
-    "- You MAY read full files from each branch's working-dir path above — they\n" +
-    '  are the ONLY absolute paths you should touch outside the cwd.\n' +
-    '- When two branches changed the SAME file, combine both sets of changes\n' +
-    "  intelligently; do not drop either side's edits. If truly contradictory,\n" +
-    '  keep both and add a short comment noting the conflict.\n' +
+    '- Merge EVERY branch\'s changes (from its `<dirName>/` subdirectory) into the\n' +
+    '  current directory root.\n' +
+    '- The root already equals the shared baseline, so apply each branch\'s diff on\n' +
+    '  top of it. You can read full files from each `<dirName>/` subdirectory.\n' +
+    '- When two branches changed the SAME file, combine both sets of changes; do\n' +
+    "  not drop either side. If truly contradictory, keep both and add a comment.\n" +
     '- Do NOT modify files that none of the branches changed.\n' +
-    '- Write merged results to the current working directory using RELATIVE paths.\n' +
+    '- Write merged results to the current directory using RELATIVE paths.\n' +
     '- When done, briefly summarize what you merged.\n'
 
   await writeFile(join(dest, 'MERGE_TASK.md'), task)
   await injectRule(dest, 'Merge Workspace', MERGE_RULE, 'Merge Workspace (OpenCode Canvas)')
   await ensureGitignored(mainRepoPath)
 
-  return { path: dest, type: 'copy', mainRepoPath, baseRef: mainRepoPath }
+  return { path: dest, type: 'copy', mainRepoPath, baseRef: ancestorPath }
 }
 
 /**
- * Unified diff of what the branch changed vs its fork point (base snapshot).
- * Uses `git diff --no-index` so no repository is required. Absolute store
- * paths are stripped from the output for a readable diff.
+ * Unified diff between two directories via `git diff --no-index` (no repo
+ * required). Absolute path prefixes are stripped for readable a/ b/ labels.
  */
-export async function diffWorkspace(ws: ForkWorkspace): Promise<string> {
-  // git diff --no-index exits 1 when differences exist (stdout = the diff)
+export async function diffDirs(a: string, b: string): Promise<string> {
   let raw = ''
   try {
-    const r = await run('git', ['diff', '--no-index', '--no-color', ws.baseRef!, ws.path])
+    const r = await run('git', ['diff', '--no-index', '--no-color', a, b])
     raw = r.stdout
   } catch (e: unknown) {
     const err = e as { stdout?: string }
     raw = err.stdout ?? ''
   }
-  // collapse the absolute snapshot/copy prefixes into clean a/ b/ labels
-  return raw
-    .split(ws.baseRef!)
-    .join('')
-    .split(ws.path)
-    .join('')
-    .replace(/\/{2,}/g, '/')
+  return raw.split(a).join('').split(b).join('').replace(/\/{2,}/g, '/')
+}
+
+/**
+ * Unified diff of what the branch changed vs its baseline (baseRef).
+ */
+export async function diffWorkspace(ws: ForkWorkspace): Promise<string> {
+  if (!ws.baseRef) return ''
+  return diffDirs(ws.baseRef, ws.path)
 }
 
 interface FileChange {
