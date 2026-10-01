@@ -6,6 +6,26 @@
   color-scheme: dark;
 }
 
+/* ── occ 2.0 node life-cycle animations (§9.6) ── */
+@keyframes occ-breathe-kf {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes occ-blink-kf {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+@keyframes occ-born-kf {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.occ-breathe { animation: occ-breathe-kf 1.2s ease-in-out infinite; }
+.occ-blink { animation: occ-blink-kf 0.66s ease-in-out infinite; }
+.occ-born { animation: occ-born-kf 0.35s cubic-bezier(0.33, 1, 0.68, 1); }
+/* frozen = calcified: desaturated, frosted (§9.6 visual metaphor) */
+.occ-frost { filter: saturate(0.4) brightness(0.92); }
+
 html,
 body,
 #root {

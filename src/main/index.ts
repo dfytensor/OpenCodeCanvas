@@ -1,16 +1,16 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { registerIpc } from './ipc'
-import { killAll } from './pty'
+import { stopServer } from './opencode/server'
 
 let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 900,
-    minHeight: 600,
+    width: 1560,
+    height: 940,
+    minWidth: 980,
+    minHeight: 640,
     show: false,
     autoHideMenuBar: true,
     title: 'OpenCode Canvas',
@@ -34,13 +34,38 @@ function createWindow(): void {
 
   // electron-vite dev server vs production build
   if (process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    const url = process.env['ELECTRON_RENDERER_URL']
+    // dev-only scripted GUI automation (?auto=1) — see renderer/automation.ts
+    mainWindow.loadURL(process.env.OCC_AUTOMATION === '1' ? url + '/?auto=1' : url)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+
+  // automation result sink: the in-page script reports through document.title
+  if (process.env.OCC_AUTOMATION === '1') {
+    const out = join(app.getPath('temp'), 'occ-auto-result.log')
+    let last = ''
+    const { appendFileSync } = require('fs') as typeof import('fs')
+    const iv = setInterval(() => {
+      const t = mainWindow?.webContents.getTitle() ?? ''
+      if (t.startsWith('OCC-AUTOTEST') && t !== last) {
+        last = t
+        try {
+          appendFileSync(out, `${new Date().toISOString().slice(11, 19)} ${t}\n`, 'utf8')
+        } catch {
+          // ignore
+        }
+      }
+    }, 2000)
+    mainWindow.on('closed', () => clearInterval(iv))
   }
 }
 
 app.whenReady().then(() => {
+  // GUI-automation hook (dev only): enable CDP for external driving/tests
+  if (process.env.OCC_CDP_PORT) {
+    app.commandLine.appendSwitch('remote-debugging-port', process.env.OCC_CDP_PORT)
+  }
   registerIpc()
   createWindow()
 
@@ -50,10 +75,9 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  killAll()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
-  killAll()
+  void stopServer()
 })

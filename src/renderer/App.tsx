@@ -1,28 +1,27 @@
-import { useCallback } from 'react'
+import { useEffect } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { Sidebar } from './components/Sidebar'
-import { Toolbar, type AddMode } from './components/Toolbar'
-import { CanvasView } from './components/CanvasView'
-import { usePtyRouter } from './lib/usePtyRouter'
+import { TopBar } from './components/TopBar'
+import { GraphCanvas } from './components/GraphCanvas'
+import { InheritWizard } from './components/InheritWizard'
+import { useOccStore } from './store/occStore'
 
 export default function App(): React.ReactElement {
-  usePtyRouter()
+  const subscribe = useOccStore((s) => s.subscribe)
 
-  const handleAdd = useCallback((mode: AddMode): void => {
-    window.dispatchEvent(new CustomEvent('canvas:add', { detail: mode }))
-  }, [])
+  useEffect(() => {
+    // single live-event subscription for the whole app (graph + chats)
+    return subscribe()
+  }, [subscribe])
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-canvas-bg">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Toolbar onAdd={handleAdd} />
-        <main className="min-h-0 flex-1">
-          <ReactFlowProvider>
-            <CanvasView />
-          </ReactFlowProvider>
-        </main>
-      </div>
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-canvas-bg">
+      <TopBar />
+      <main className="min-h-0 flex-1">
+        <ReactFlowProvider>
+          <GraphCanvas />
+        </ReactFlowProvider>
+      </main>
+      <InheritWizard />
     </div>
   )
 }

@@ -1,16 +1,17 @@
+// Best-effort wrappers around the opencode CLI (export / import / list / version).
+// All commands fail soft: parse errors or non-zero exits resolve to null / [].
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { existsSync } from 'fs'
-import { writeFile } from 'fs/promises'
+import { writeFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { shortId } from './worktree'
+import { randomUUID } from 'crypto'
 
 const run = promisify(execFile)
 
 function oc(args: string[], opts: { cwd?: string } = {}): Promise<string> {
-  // On Windows `opencode` is an npm shim (opencode.cmd); child_process can't
-  // launch .cmd directly, so route through cmd.exe (resolves PATH + PATHEXT).
+  // On Windows `opencode` is an npm shim (opencode.cmd); route through cmd.exe.
   const isWin = process.platform === 'win32'
   const file = isWin ? (process.env.COMSPEC ?? 'cmd.exe') : 'opencode'
   const finalArgs = isWin ? ['/c', 'opencode', ...args] : args
@@ -22,44 +23,59 @@ function oc(args: string[], opts: { cwd?: string } = {}): Promise<string> {
   }).then((r) => r.stdout)
 }
 
-/**
- * List sessions as JSON.
- */
-export async function sessionList(cwd?: string): Promise<any[]> {
-  const raw = await oc(['session', 'list', '--format', 'json'], { cwd })
+export async function exportSession(
+  sessionId: string,
+  opts?: { sanitize?: boolean; cwd?: string }
+): Promise<unknown | null> {
   try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : parsed.sessions ?? []
+    const raw = await oc(['export', sessionId], { cwd: opts?.cwd })
+    return JSON.parse(raw) as unknown
+  } catch {
+    return null
+  }
+}
+
+export async function importTranscript(json: unknown, cwd: string): Promise<string | null> {
+  const file = join(tmpdir(), `occ-import-${randomUUID()}.json`)
+  try {
+    await writeFile(file, JSON.stringify(json), 'utf8')
+    const out = await oc(['import', file], { cwd })
+    const m = out.match(/ses_[A-Za-z0-9]+/)
+    return m ? m[0] : null
+  } catch {
+    return null
+  } finally {
+    void unlink(file).catch(() => {})
+  }
+}
+
+export async function sessionListCli(cwd?: string): Promise<any[]> {
+  try {
+    const raw = await oc(['session', 'list', '--format', 'json'], { cwd })
+    const parsed = JSON.parse(raw) as unknown
+    if (Array.isArray(parsed)) return parsed
+    const sessions = (parsed as { sessions?: unknown } | null)?.sessions
+    return Array.isArray(sessions) ? (sessions as any[]) : []
   } catch {
     return []
   }
 }
 
-/**
- * Find the most recent session whose parentID === parentSessionId.
- * Falls back to scanning createdAt descending.
- */
-export async function findForkedSession(parentSessionId: string, cwd?: string): Promise<string | null> {
-  const sessions = await sessionList(cwd)
-  const children = sessions
-    .filter((s) => String(s.parentID ?? s.parentId ?? s.parent) === parentSessionId)
-    .sort((a, b) => String(b.createdAt ?? b.created_at ?? '').localeCompare(String(a.createdAt ?? a.created_at ?? '')))
-  if (children.length > 0) return String(children[0].id)
-  return null
+export async function cliVersion(): Promise<string | null> {
+  try {
+    const out = (await oc(['--version'])).trim()
+    if (!out) return null
+    const m = out.match(/\d+\.\d+\.\d+\S*/)
+    return m ? m[0] : out
+  } catch {
+    return null
+  }
 }
 
-/**
- * Fork a session non-interactively and return the new session id.
- * `opencode run --session <id> --fork` with an empty message creates the fork.
- */
-export async function forkSession(parentSessionId: string, cwd: string): Promise<string> {
-  // create the fork with an effectively empty prompt so no real work is done
-  await oc(['run', '--session', parentSessionId, '--fork', '--format', 'json', ''], { cwd })
-  const newId = await findForkedSession(parentSessionId, cwd)
-  if (!newId) throw new Error('Could not locate forked session id')
-  return newId
-}
-
+// fork-into-dir: opencode's native fork pins the parent's directory, which is
+// wrong for isolated copies — this copies session+message+part rows in
+// opencode's SQLite (via system node's node:sqlite) binding the new session
+// to the destination directory. Proven in 1.0, kept as the fork channel.
 /**
  * Copy a session's CONVERSATION (full message history) into a different working
  * directory, INSTANTLY and without any LLM call.
@@ -143,21 +159,10 @@ export async function forkSessionIntoDir(
  * sessions and returning the latest one for the current project.
  */
 export async function detectSession(cwd: string): Promise<string | null> {
-  const sessions = await sessionList(cwd)
+  const sessions = await sessionListCli(cwd)
   if (sessions.length === 0) return null
   const sorted = [...sessions].sort((a, b) =>
     String(b.createdAt ?? b.created_at ?? '').localeCompare(String(a.createdAt ?? a.created_at ?? ''))
   )
   return String(sorted[0].id)
-}
-
-/**
- * Run an arbitrary opencode command (used for diagnostics / dry runs).
- */
-export async function runRaw(cwd: string, args: string[]): Promise<string> {
-  return oc(args, { cwd })
-}
-
-export function newBranchName(): string {
-  return `fork-${shortId()}`
 }

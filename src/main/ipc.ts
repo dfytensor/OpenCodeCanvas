@@ -1,95 +1,200 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { spawnPty, writePty, resizePty, killPty } from './pty'
-import { sessionList, detectSession, runRaw, forkSessionIntoDir } from './opencode'
-import { worktreeAdd, worktreeRemove, isRepo, gitDiff } from './worktree'
-import { prepare, prepareMerge, diffWorkspace, applyWorkspaceToMain, removeWorkspace } from './workspace'
-import type { PtySpawnOptions, ForkWorkspace, PrepareOptions, MergePrepareOptions, MergeSource } from '../shared/types'
+import type {
+  InheritPlan,
+  NodeID,
+  NodeKind,
+  InheritChannel,
+  AgentEngine,
+  ProjectPolicy
+} from '../shared/types'
+// ── engine & graph services ──
+import { ensureServer, getServer } from './opencode/server'
+import { probeCapabilities } from './opencode/probe'
+import { ocApi } from './opencode/api'
+import { openProjectWithGraph } from './project/lifecycle'
+import { getActiveProject, setActiveProject, updatePolicy } from './project/registry'
+import { getGraph, propagateTaint, summarizeNodes } from './graph/store'
+import { onOccEvent } from './graph/events'
+import {
+  createInheritNode,
+  inspectNodeManifest,
+  freezeNode,
+  unfreezeNode,
+  archiveNode,
+  sendToNode,
+  abortNode,
+  applyNodeToMainline,
+  ensureObserver
+} from './inherit/executor'
+import { diffDirs } from './workspace/diff'
+// ── chat ──
+import { createChat, chatSend, chatLog } from './chat'
+
+function requireProject(): string {
+  const p = getActiveProject()
+  if (!p) throw new Error('no project open')
+  return p.rootDir
+}
 
 export function registerIpc(): void {
-  // ---- pty ----
-  ipcMain.handle('pty:spawn', (_e, opts: PtySpawnOptions) => {
-    spawnPty(opts)
-  })
-
-  ipcMain.on('pty:input', (_e, ptyId: string, data: string) => {
-    writePty(ptyId, data)
-  })
-
-  ipcMain.on('pty:resize', (_e, ptyId: string, cols: number, rows: number) => {
-    resizePty(ptyId, cols, rows)
-  })
-
-  ipcMain.on('pty:kill', (_e, ptyId: string) => {
-    killPty(ptyId)
-  })
-
-  // ---- opencode ----
-  // Note: session forking is handled natively by spawning the terminal with
-  // `opencode --session <id> --fork` (see TerminalNode). No server-side fork step needed.
-
-  ipcMain.handle('opencode:sessionList', async (_e, cwd?: string) => {
-    return sessionList(cwd)
-  })
-
-  ipcMain.handle('opencode:detectSession', async (_e, cwd: string) => {
-    return detectSession(cwd)
-  })
-
-  ipcMain.handle('opencode:run', async (_e, cwd: string, args: string[]) => {
-    return runRaw(cwd, args)
-  })
-
-  ipcMain.handle(
-    'opencode:forkIntoDir',
-    async (_e, parentSessionId: string, parentCwd: string, destDir: string) => {
-      return forkSessionIntoDir(parentSessionId, parentCwd, destDir)
-    }
-  )
-
-  // ---- git ----
-  ipcMain.handle('git:worktreeAdd', async (_e, repoPath: string, branchName: string) => {
-    return worktreeAdd(repoPath, branchName)
-  })
-
-  ipcMain.handle('git:worktreeRemove', async (_e, path: string) => {
-    await worktreeRemove(path)
-  })
-
-  ipcMain.handle('git:isRepo', async (_e, path: string) => {
-    return isRepo(path)
-  })
-
-  ipcMain.handle('git:diff', async (_e, worktree: string, base?: string) => {
-    return gitDiff(worktree, base)
-  })
-
-  // ---- workspace isolation (file-level branching) ----
-  ipcMain.handle('workspace:prepare', async (_e, opts: PrepareOptions) => {
-    return prepare(opts)
-  })
-
-  ipcMain.handle('workspace:prepareMerge', async (_e, sources: MergeSource[], opts: MergePrepareOptions) => {
-    return prepareMerge(sources, opts)
-  })
-
-  ipcMain.handle('workspace:diff', async (_e, ws: ForkWorkspace) => {
-    return diffWorkspace(ws)
-  })
-
-  ipcMain.handle('workspace:apply', async (_e, ws: ForkWorkspace) => {
-    return applyWorkspaceToMain(ws)
-  })
-
-  ipcMain.handle('workspace:remove', async (_e, ws: ForkWorkspace) => {
-    await removeWorkspace(ws)
-  })
-
-  // ---- dialog ----
+  // ---- project ----
   ipcMain.handle('dialog:pickDirectory', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const res = win
       ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
       : await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return res.canceled ? null : res.filePaths[0]
+  })
+
+  ipcMain.handle('occ:serverStatus', async () => {
+    const h = await getServer()
+    if (h) return { ready: true, port: h.port, managed: h.managed }
+    const caps = await probeCapabilities().catch(() => null)
+    return { ready: false, version: caps?.version, managed: false }
+  })
+
+  ipcMain.handle('occ:capabilities', async () => {
+    return probeCapabilities()
+  })
+
+  ipcMain.handle('occ:openProject', async (_e, rootDir: string) => {
+    await ensureServer(rootDir)
+    await openProjectWithGraph(rootDir)
+    ensureObserver(rootDir)
+    const project = getActiveProject()
+    const graph = await getGraph(rootDir)
+    return { project, graph }
+  })
+
+  ipcMain.handle('occ:closeProject', async () => {
+    setActiveProject(null)
+  })
+
+  ipcMain.handle('occ:getGraph', async () => {
+    const p = getActiveProject()
+    return p ? getGraph(p.rootDir) : null
+  })
+
+  ipcMain.handle('occ:nodeSummaries', async () => {
+    const p = getActiveProject()
+    if (!p) return []
+    const g = await getGraph(p.rootDir)
+    return summarizeNodes(g)
+  })
+
+  // ---- policy ----
+  ipcMain.handle('occ:models', async () => {
+    const p = getActiveProject()
+    const native = p?.policy.engine === 'native'
+    const [serverProv, agents] = await Promise.all([
+      native ? Promise.resolve([]) : ocApi.listProviders().catch(() => []),
+      native ? Promise.resolve([]) : ocApi.listAgents().catch(() => [])
+    ])
+    const { agentCatalog } = await import('./agent/session')
+    const own = agentCatalog()
+    const providers = native
+      ? own
+      : [...own, ...serverProv.filter((s) => !own.some((a) => a.id === s.id))]
+    return { providers, agents }
+  })
+
+  ipcMain.handle('occ:updatePolicy', async (_e, patch: Partial<ProjectPolicy>) => {
+    return updatePolicy(requireProject(), patch)
+  })
+
+  ipcMain.handle('occ:setEngine', async (_e, engine: AgentEngine) => {
+    return updatePolicy(requireProject(), { engine })
+  })
+
+  // ---- nodes ----
+  ipcMain.handle(
+    'occ:createNode',
+    async (
+      _e,
+      plan: InheritPlan | null,
+      opts: { parents: NodeID[]; kind: NodeKind; title?: string; kickoff?: string; channel?: InheritChannel }
+    ) => {
+      return createInheritNode(requireProject(), plan, opts)
+    }
+  )
+
+  ipcMain.handle('occ:inspectNode', async (_e, nodeId: NodeID) => {
+    return inspectNodeManifest(requireProject(), nodeId)
+  })
+
+  ipcMain.handle('occ:freezeNode', async (_e, nodeId: NodeID) => {
+    return freezeNode(requireProject(), nodeId)
+  })
+
+  ipcMain.handle('occ:unfreezeNode', async (_e, nodeId: NodeID) => {
+    return unfreezeNode(requireProject(), nodeId)
+  })
+
+  ipcMain.handle('occ:archiveNode', async (_e, nodeId: NodeID) => {
+    return archiveNode(requireProject(), nodeId)
+  })
+
+  ipcMain.handle('occ:taintNode', async (_e, nodeId: NodeID, level: 'suspicious' | 'confirmed') => {
+    return propagateTaint(requireProject(), nodeId, level)
+  })
+
+  ipcMain.handle('occ:sendToNode', async (_e, nodeId: NodeID, message: string) => {
+    await sendToNode(requireProject(), nodeId, message)
+  })
+
+  ipcMain.handle('occ:abortNode', async (_e, nodeId: NodeID) => {
+    await abortNode(requireProject(), nodeId)
+  })
+
+  ipcMain.handle('occ:nodeDiff', async (_e, nodeId: NodeID) => {
+    const rootDir = requireProject()
+    const g = await getGraph(rootDir)
+    const node = g.nodes[nodeId]
+    if (!node?.workDir || !node?.snapshotDir) return ''
+    return diffDirs(node.snapshotDir, node.workDir)
+  })
+
+  ipcMain.handle('occ:applyNode', async (_e, nodeId: NodeID) => {
+    return applyNodeToMainline(requireProject(), nodeId)
+  })
+
+  ipcMain.handle(
+    'occ:runPipeline',
+    async (
+      _e,
+      opts: { parentId: NodeID; tasks: string[]; title?: string; kickoff?: string; channel?: 'fork' | 'brief'; timeoutMs?: number }
+    ) => {
+      const { runParallelPipeline } = await import('./inherit/executor')
+      return runParallelPipeline(requireProject(), opts)
+    }
+  )
+
+  ipcMain.handle(
+    'occ:runAdaptive',
+    async (_e, opts: { parentId: NodeID; goal: string; maxRounds?: number; channel?: 'fork' | 'brief' }) => {
+      const { startAdaptivePipeline } = await import('./inherit/executor')
+      startAdaptivePipeline(requireProject(), opts)
+      return { started: true }
+    }
+  )
+
+  // ---- chat nodes ----
+  ipcMain.handle('occ:createChat', async () => {
+    return createChat(requireProject())
+  })
+
+  ipcMain.handle('occ:chatSend', async (_e, chatId: NodeID, text: string) => {
+    await chatSend(requireProject(), chatId, text)
+  })
+
+  ipcMain.handle('occ:chatLog', async (_e, chatId: NodeID) => {
+    return chatLog(requireProject(), chatId)
+  })
+
+  // push internal occ events to every renderer window
+  onOccEvent((event) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('occ:event', event)
+    }
   })
 }
