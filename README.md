@@ -1,154 +1,103 @@
-# OpenCode Canvas
+# OpenCode Canvas 2.0
 
-一个**可视化的无限画布**，把 OpenCode 会话变成画布上可拖拽、可缩放、可**会话分支**的终端节点。同一段对话可以随时分叉出多条平行线路，互不干扰——像 Git 分支一样管理你的 AI 编码会话。
+一个**项目级会话编排 Agent 系统**——以项目为单位，聊天节点为根，agent 图向右生长直到任务完成。多重性 × 相互作用 × 约束 = 涌现。
 
-![stack](https://img.shields.io/badge/Electron-33-47848F) ![stack](https://img.shields.io/badge/React-18-61DAFB) ![stack](https://img.shields.io/badge/React%20Flow-12-FF4B4B) ![stack](https://img.shields.io/badge/xterm.js-5-2D2D2D)
-
----
-
-## 特性
-
-| 能力 | 说明 |
-|------|------|
-| 无限缩放画布 | React Flow 点阵画布，滚轮缩放、拖拽平移、小地图、控件 |
-| 终端节点 | 每个节点是一个真实终端（node-pty + xterm.js），完全可交互 |
-| **会话分支** | 右键/`⑂` 基于 OpenCode `--fork` 复制对话历史，分叉出独立会话，并行互不干扰 |
-| 独立全屏 | 每个节点可单独全屏（Portal 覆盖），滚动历史完整保留 |
-| 右键菜单 | 画布右键增删终端、fit view；节点右键全屏 / 分支 / 重启 / 删除 |
-| 画布管理 | 侧栏多画布：新建 / 重命名 / 复制 / 删除，localStorage 持久化 |
-| 分支血缘 | 主线→分支用紫色虚线边表示"fork 关系"，非数据管道 |
+> 从「画布上的终端分叉工具」升级为「自适应多 agent 管线 + 经验自进化系统」
 
 ---
 
-## 工作原理
+## 它是什么
 
-```
-┌─ 画布层 (React Flow + xterm.js) ──────────────────────┐
-│   主会话节点 ──fork edge──▶ 分支A (session A')         │
-│                          └▶ 分支B (session A'')        │
-├─ Electron 主进程 ─────────────────────────────────────┤
-│   node-pty        每个 = 一个独立 pty                  │
-│   opencode CLI    会话状态全部归 OpenCode 的 SQLite    │
-└────────────────────────────────────────────────────────┘
-```
+打开项目 → 右键新建聊天窗口 → 输入目标 → 系统自动：
+1. **规划**（Jev 级联分类：零节点直答 / 单任务 / 并行扇出 / 串行链）
+2. **执行**（多个 agent 并行工作，每个有独立工作副本 + 白板共笔）
+3. **合并**（产物自动合并进项目根，三耦合环验证 + Goodhart 追踪）
+4. **验收**（功能级验收员真运行代码，fitness 梯度评分，不通过自动延伸）
+5. **学习**（routing.jsonl + self-policy.json 自进化——失败策略自动降级，成功策略优先繁殖）
 
-**会话分支的核心**：画布只管"节点 + 血缘 + pty 容器"，对话状态完全交给 OpenCode。分叉时新节点执行：
+## 六层自治
 
-```bash
-opencode --session <父会话id> --fork
-```
-
-OpenCode 原生把父对话历史**完整复制**到新 session，两条线从分叉点各自独立演进。画布通过 `created` 时间戳 + `directory` 定位每个节点对应的 session（CLI 列表无 parentID，故用时间+目录匹配）。
-
----
-
-## 技术栈
-
-- **Electron 33** — 桌面壳，主进程管理 pty / IPC / OpenCode CLI
-- **node-pty 1.x** — 真实终端（N-API，Electron 下免重编）
-- **React 18 + Vite** — 渲染层
-- **React Flow (@xyflow/react) 12** — 无限画布、节点、边
-- **xterm.js** — 终端渲染（FitAddon / WebLinksAddon / SerializeAddon）
-- **zustand** — 画布状态 + localStorage 持久化
-- **Tailwind CSS** — 样式
-- **electron-vite** — 构建
-
----
+| 层 | 能力 | 实测 |
+|---|---|---|
+| 规划 | 零节点直答 / 单任务 / 扇出 / 串行链（成本拓扑） | 16 任务基准 8/8+8/8 |
+| 执行 | 跨模型变体竞争 / 白板共笔 / 串行链自适应 | 5 HumanEval 5/5+5/5 |
+| 合并 | 三耦合环验证（coder→reviewer→Goodhart）+ 产物闭环 | 多轮增量 ALL PASS |
+| 验收 | 功能级验收员（真运行代码）+ fitness 0-1 + Jev 快筛级联 | ROOT VERIFY fib(10)=55 |
+| 门控 | 预算提醒-确认 / 权限询问-Jev 安全分类 | 非阻塞 + 其他聊天不受影响 |
+| 经验 | routing.jsonl → 策略自进化（self-policy vN 自写自用） | routing-adjust 实测触发 |
 
 ## 快速开始
 
-### 前置要求
-
-- Node.js ≥ 20
-- [OpenCode](https://opencode.ai) CLI 已安装并登录（`opencode` 可在终端运行）
-- Windows / macOS / Linux
-
-### 安装
-
 ```bash
-git clone https://github.com/dfytensor/OpenCodeCanvas.git
-cd OpenCodeCanvas
 npm install
-```
-
-> Windows 上首次安装会下载 Electron 二进制；若网络慢，可设置镜像：
-> `set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` 后再 `npm install`。
-
-### 开发模式
-
-```bash
 npm run dev
 ```
 
-### 生产构建
+1. 顶栏 **打开项目** 选择工作目录
+2. 右键画布 → **💬 New chat window**
+3. 输入目标（支持多行=多子任务），回车
+4. 图向右生长直到完成
 
-```bash
-npm run build      # 输出到 out/
-npm run preview    # 用构建产物启动
-```
-
-### 类型检查
-
-```bash
-npm run typecheck
-```
-
----
-
-## 使用方法
-
-1. 启动后，左栏 **Pick directory** 选择一个工作目录。
-2. 顶栏 **+ OpenCode** 或画布右键 **Add OpenCode terminal** 创建一个 OpenCode 终端节点。
-3. 在终端里**先发一条消息**（这会真正创建会话）。
-4. 状态点变绿后，点节点右上角 **⑂**（或右键 → Fork from here）分叉出新会话节点。
-5. 点 **⤢** 单节点全屏；滚轮缩放画布、拖空白处平移。
-6. **合并多分支**：Shift+点击选中 ≥2 个 fork/merge 节点的标题栏，右键画布空白处 → `Ⓜ Merge N selected branches`，生成绿色 `merge` 节点并自动让 OpenCode 合并；完成后点 `⬇` 把合并结果 apply 回主线。
-
----
-
-## 项目结构
+## 架构
 
 ```
-src/
-├── main/              # Electron 主进程
-│   ├── index.ts       # 窗口创建
-│   ├── pty.ts         # node-pty 终端管理
-│   ├── opencode.ts    # opencode CLI 封装（session list 等）
-│   ├── worktree.ts    # git 封装（预留：diff/文件隔离）
-│   └── ipc.ts         # IPC 通道注册
-├── preload/
-│   └── index.ts       # contextBridge 安全 API
-├── renderer/          # React 渲染层
-│   ├── App.tsx
-│   ├── components/    # CanvasView / TerminalNode / Sidebar / Toolbar / ContextMenu
-│   ├── store/         # canvasStore (zustand + persist)
-│   └── lib/           # pty 路由 / 终端注册表
-└── shared/
-    └── types.ts       # 主/预加载/渲染共享类型
+src/main/
+├── agent/           # 原生 agent 内核
+│   ├── jev.ts       # Jev/AnyJev 级联（类型化决策 + 校准）
+│   ├── loop.ts      # 工具循环（http.request，零 undici）
+│   ├── providers.ts # 多 provider 目录（zhipuai/deepseek/本地）
+│   ├── session.ts   # 会话注册 + 权限门 + 白板
+│   └── tools.ts     # bash/read/write/edit/list（沙箱囚禁）
+├── inherit/         # 自适应管线
+│   ├── executor.ts  # 经验路由 + 变体竞争 + 产物闭环 + 验收级联
+│   ├── channels.ts  # fork/import/brief 三通道
+│   └── budget.ts    # token 预算
+├── graph/           # append-only DAG 存储
+├── opencode/        # opencode server 托管 + API + SSE
+├── workspace/       # 快照/复制/diff/apply/归档
+├── project/         # 项目注册 (.occ/project.json)
+├── chat.ts          # 聊天节点管理
+└── verify/          # 三耦合环验证 + Goodhart 追踪
 ```
 
----
+## 自治层级
 
-## 平台说明
+```
+L0   规划     零节点直答 / 单任务 / 扇出 / 串行链（成本拓扑）
+L1   执行     白板共笔 / 变体竞争 / 跨模型轮转 / 串行链自适应
+L1   纠错     产物闭环 / 验收 CONTINUE 延伸 / 权限拒绝适应
+L1   门控     预算提醒-确认 / 权限询问-Jev 安全分类
+L1.5 合并验证 三耦合环（coder→reviewer→Goodhart→才准合并）
+L2   经验     routing.jsonl → 经验路由自动改串行
+L2.5 策略进化 self-policy.json 自写自用（vN 自审计）
+```
 
-- **Windows**：`opencode` 是 npm 全局 shim（`.cmd`），主进程 pty 与 CLI 调用均通过 `cmd.exe /c` 包装以解析 PATH+PATHEXT。
-- **node-pty**：基于 N-API，跨 Node/Electron ABI 稳定，无需 `electron-rebuild`。
+## 基准
 
----
+| | 通过率 | 平均墙钟 | tokens/任务 |
+|---|---|---|---|
+| baseline 单线程 | 8/8 | 23s | ~7k |
+| ours 推理管线 | 8/8 | 111s | ~52k |
 
-## 路线图
+> ours 在轻任务上不占优（管线开销），价值在多轮长链任务（激活前沿不重做）和经验积累（失败策略自动降级）。
 
-- [x] **分支节点标题显示对话摘要** — 检测到会话后自动把 OpenCode session 的 `title` 写到节点上
-- [x] **文件级隔离** — 每次 fork 直接 **copy 整份当前项目**（含未提交改动）到 `.opencode-canvas/{snapshots,copies}/<id>`：`snapshots` 是冻结的 fork 起点（diff 基线），`copies` 是分支运行的工作副本。各分支文件完全独立、可并行操作，不依赖 git
-- [x] **diff 预览节点** — fork 节点上点 `⌗` 生成 diff 节点：`git diff --no-index <snapshot> <copy>`（无需仓库），带 +/- 着色、可 `↻` 刷新
-- [x] **apply 回主线** — fork 节点上点 `⬇`：解析 `git diff --no-index --name-status` 得到分支改动的文件，仅把这些文件回写到主项目（主项目自己改的其它文件不受影响）
-- [x] **AI 多分支合并（merge 节点）** — Shift+点击选中 ≥2 个分支节点，右键画布空白处选 `Ⓜ Merge N selected branches`：基于主线当前状态复制出一个新工作副本（base = 现主线，作 diff/apply 基线），把每个源分支的**绝对工作目录 + 其相对 fork 点的 diff** 写进 `MERGE_TASK.md`，并在 `AGENTS.md` 注入合并指令；新节点起一个 OpenCode 会话，**自动发送** kickoff 让 agent 把各分支改动合并进当前目录。合并节点同样支持 `⌗` diff / `⬇` apply 回主线。血缘为多父节点（绿边框 + `merge` 徽标），完全复用 diff/apply 逻辑——不写任何 merge 算法，合并语义全交给 OpenCode。
+## Jev/AnyJev 集成
 
-> 为什么不用 git worktree？`git worktree` 从最近一次 commit 分叉，**不包含工作区未提交改动**——而 OpenCode agent 通常只改工作区不 commit，分叉出的对话上下文与分支文件状态会对不上。改用"整份 copy 当前状态"后，fork 起点 = 主线此刻的真实状态，对话与文件完全一致；diff/apply 也只靠 `git diff --no-index`（不需要仓库），逻辑统一。merge 同理：以"主线当前状态"为基线，apply 回主线即净合并结果。
+- **Round-0 规划**：Jev Choice（ANSWER/BUILD + 并行判定）→ GLM 兜底
+- **验收快筛**：Jev Noul（goal_met 概率）→ 高置信接受，低置信升级 GLM 验收员
+- **权限门**：Jev Noul（safe 分类）→ 高置信自动放行，低置信询问用户
+- **校准**：routing.jsonl + calibration.jsonl → 置信度自调（AnyJev observe() 模式）
 
+## 设计原则
 
-
----
+1. 继承 = 投影，不是复制
+2. 上下文与工作区正交
+3. 不写合并算法——冲突交给 agent
+4. append-only——节点永不删除
+5. 白板共笔——worker 间接交互
+6. 梯度适应度——不止过/不过
+7. 策略自进化——失败经验写入规则
+8. 验收价值学习——零捕获则跳过验收
 
 ## License
 
