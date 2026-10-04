@@ -1,4 +1,5 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { join } from 'path'
 import type {
   InheritPlan,
   NodeID,
@@ -51,6 +52,17 @@ export function registerIpc(): void {
     if (h) return { ready: true, port: h.port, managed: h.managed }
     const caps = await probeCapabilities().catch(() => null)
     return { ready: false, version: caps?.version, managed: false }
+  })
+
+  ipcMain.handle('occ:setJevKey', async (_e, key: string) => {
+    process.env.OPENROUTER_API_KEY = key
+    // persist for future sessions
+    const settingsFile = join(process.env.OCC_PROJECT_DIR ?? process.env.HOME ?? process.env.USERPROFILE ?? '', '.occ-settings.json')
+    try {
+      const { writeFileSync } = await import('fs')
+      writeFileSync(settingsFile, JSON.stringify({ openrouterKey: key }), 'utf8')
+    } catch { /* best-effort */ }
+    return { ok: true }
   })
 
   ipcMain.handle('occ:capabilities', async () => {

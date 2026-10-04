@@ -347,6 +347,7 @@ export interface ElectronAPI {
     models: () => Promise<OcModelCatalog>
     updatePolicy: (patch: Partial<ProjectPolicy>) => Promise<Project>
     setEngine: (engine: AgentEngine) => Promise<Project>
+    setJevKey: (key: string) => Promise<{ ok: boolean }>
     openProject: (rootDir: string) => Promise<{ project: Project; graph: GraphDoc } | null>
     closeProject: () => Promise<void>
     getGraph: () => Promise<GraphDoc | null>

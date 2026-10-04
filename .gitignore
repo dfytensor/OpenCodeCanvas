@@ -5,6 +5,7 @@ dist
 *.tsbuildinfo
 .DS_Store
 .vite
+.occ/
 
 # bench temp results
 bench-*.json

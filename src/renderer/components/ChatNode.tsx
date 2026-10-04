@@ -15,8 +15,20 @@ const STATUS_DOT: Record<NodeStatus, string> = {
   archived: 'bg-slate-600'
 }
 
+const STATUS_LABEL: Record<NodeStatus, string> = {
+  draft: 'ready',
+  provisioning: 'starting…',
+  running: 'working…',
+  awaiting_input: 'needs your input',
+  completed: 'done',
+  failed: 'failed',
+  aborted: 'stopped',
+  frozen: 'frozen',
+  archived: 'archived'
+}
+
 const ROLE_STYLE: Record<string, string> = {
-  user: 'border-canvas-accent/50 bg-canvas-accent/10 text-gray-100',
+  user: 'border-canvas-accent/50 bg-canvas-accent/10 text-gray-100 self-end ml-6',
   manager: 'border-canvas-fork/40 bg-canvas-fork/5 text-gray-300',
   worker: 'border-canvas-border bg-canvas-node/60 text-gray-400',
   final: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-100'
@@ -26,22 +38,33 @@ const ROLE_TAG: Record<string, string> = {
   user: 'you',
   manager: 'manager',
   worker: 'agent',
-  final: 'result'
+  final: '✅ result'
+}
+
+const ROLE_ALIGN: Record<string, string> = {
+  user: 'items-end',
+  final: 'items-end'
 }
 
 // stable empty ref — a fresh [] in the selector would re-render forever
 const EMPTY_LOG: ChatEntry[] = []
 
-// A chat window that lives ON the canvas. Typing a goal here grows the
-// execution graph to the right of this node until the task completes.
+const QUICK_ACTIONS = [
+  { icon: '🐛', label: '修复所有 bug' },
+  { icon: '🧪', label: '写单元测试' },
+  { icon: '📖', label: '解释这段代码' },
+  { icon: '⚡', label: '优化性能' }
+]
+
 export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement => {
   const node = (data as { node: SessionNode }).node
   const log = useOccStore((s) => s.chats[id]) ?? EMPTY_LOG
   const sendChat = useOccStore((s) => s.sendChat)
   const loadChatLog = useOccStore((s) => s.loadChatLog)
+  const error = useOccStore((s) => s.error)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
-  const busy = node.status === 'running'
+  const busy = node.status === 'running' || node.status === 'awaiting_input'
 
   useEffect(() => {
     void loadChatLog(id)
@@ -51,67 +74,128 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [log.length])
 
-  const send = (): void => {
-    const text = input.trim()
-    if (!text || busy) return
-    void sendChat(id, text)
+  const send = (text?: string): void => {
+    const msg = (text ?? input).trim()
+    if (!msg || busy) return
+    void sendChat(id, msg)
     setInput('')
   }
 
+  const lastEntry = log[log.length - 1]
+  const showTyping = busy && lastEntry?.role !== 'final'
+
   return (
     <div
-      className={`occ-born flex w-[360px] flex-col overflow-hidden rounded-xl border bg-canvas-node/95 shadow-lg backdrop-blur ${
+      className={`occ-born flex w-[380px] flex-col overflow-hidden rounded-xl border bg-canvas-node/95 shadow-lg backdrop-blur ${
         selected ? 'border-canvas-accent shadow-[0_0_18px_rgba(47,129,247,0.35)]' : 'border-canvas-border'
       }`}
     >
       <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-none !bg-gray-500" />
 
+      {/* header */}
       <div className="flex items-center gap-2 border-b border-canvas-border px-3 py-2">
         <span className={`inline-block h-2 w-2 rounded-full ${STATUS_DOT[node.status]}`} />
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-200">{node.title}</span>
-        {busy && <span className="text-[9px] text-canvas-accent">growing…</span>}
+        <span className="text-[9px] text-gray-500">{STATUS_LABEL[node.status]}</span>
       </div>
 
-      <div ref={scrollRef} className="flex h-[260px] flex-col gap-1.5 overflow-y-auto p-2">
+      {/* messages */}
+      <div ref={scrollRef} className="flex h-[280px] flex-col gap-1.5 overflow-y-auto p-2">
         {log.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-            <p className="text-[11px] text-gray-400">Describe a goal —</p>
-            <p className="mt-1 text-[10px] leading-relaxed text-gray-600">
-              the manager decomposes it into opencode workers; the graph grows to the right until done.
+          <div className="flex h-full flex-col items-center justify-center px-3 text-center">
+            <p className="text-xs font-medium text-gray-300">给一个目标</p>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-gray-500">
+              agent 会拆解任务、并行执行、验收结果
             </p>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {QUICK_ACTIONS.map((q) => (
+                <button
+                  key={q.label}
+                  onClick={() => { setInput(q.label); }}
+                  className="rounded-full border border-canvas-border px-2 py-0.5 text-[9px] text-gray-400 transition-colors hover:border-canvas-accent hover:text-canvas-accent"
+                >
+                  {q.icon} {q.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {log.map((c) => (
-          <div key={c.id} className={`rounded-lg border px-2 py-1 ${ROLE_STYLE[c.role] ?? ROLE_STYLE.worker}`}>
-            <div className="mb-0.5 flex items-center gap-1.5">
-              <span className="text-[8px] font-bold uppercase tracking-wider opacity-60">{ROLE_TAG[c.role] ?? c.role}</span>
-              <span className="text-[8px] opacity-40">{c.time}</span>
+          <div key={c.id} className={`flex flex-col ${ROLE_ALIGN[c.role] ?? ''}`}>
+            <div className={`max-w-[95%] rounded-lg border px-2.5 py-1.5 ${ROLE_STYLE[c.role] ?? ROLE_STYLE.worker}`}>
+              <div className="mb-0.5 flex items-center gap-1.5">
+                <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">{ROLE_TAG[c.role] ?? c.role}</span>
+                <span className="text-[8px] opacity-30">{c.time}</span>
+              </div>
+              <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">{c.text}</p>
             </div>
-            <p className="whitespace-pre-wrap break-words text-[10px] leading-relaxed">{c.text}</p>
           </div>
         ))}
+        {/* typing indicator */}
+        {showTyping && (
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" style={{ animationDelay: '150ms' }} />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" style={{ animationDelay: '300ms' }} />
+            <span className="ml-1 text-[9px] text-gray-500">agents working…</span>
+          </div>
+        )}
       </div>
 
-      <div className="flex items-end gap-1 border-t border-canvas-border p-2">
+      {/* error banner */}
+      {error && (
+        <div className="mx-2 mb-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5">
+          <p className="text-[10px] text-red-300">{error}</p>
+          <button className="mt-0.5 text-[9px] text-red-400 underline hover:text-red-300" onClick={() => useOccStore.setState({ error: null })}>dismiss</button>
+        </div>
+      )}
+
+      {/* error recovery bar */}
+      {!busy && node.status === 'failed' && log.length > 0 && (() => {
+        const lastUser = [...log].reverse().find((e) => e.role === 'user')
+        if (!lastUser) return null
+        return (
+          <div className="mx-2 mb-1 flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-500/5 px-2.5 py-1.5">
+            <span className="text-[10px] text-orange-300">任务失败</span>
+            <div className="flex-1" />
+            <button
+              className="rounded-md bg-orange-500/20 px-2.5 py-0.5 text-[10px] text-orange-200 transition-colors hover:bg-orange-500/30"
+              onClick={() => send(lastUser.text)}
+            >
+              ↻ 重试
+            </button>
+            <button
+              className="rounded-md border border-canvas-border px-2 py-0.5 text-[10px] text-gray-400 transition-colors hover:bg-canvas-border"
+              onClick={() => useOccStore.setState({ error: null })}
+            >
+              忽略
+            </button>
+          </div>
+        )
+      })()}
+
+      {/* input */}
+      <div className="flex items-end gap-1.5 border-t border-canvas-border p-2">
         <textarea
-          className="h-11 min-w-0 flex-1 resize-none rounded-lg border border-canvas-border bg-canvas-bg px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-canvas-accent"
-          placeholder={busy ? 'working…' : 'describe the goal…'}
+          className="h-[42px] min-w-0 flex-1 resize-none rounded-lg border border-canvas-border bg-canvas-bg px-2.5 py-2 text-[11px] text-gray-200 outline-none transition-colors placeholder:text-gray-600 focus:border-canvas-accent"
+          placeholder={busy ? 'agents are working… you can type a follow-up after they finish' : '描述你的目标…（支持多行 = 多个子任务）'}
           value={input}
           disabled={busy}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              send()
-            }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
           }}
         />
         <button
-          className="shrink-0 rounded-lg bg-canvas-accent px-3 py-2 text-[11px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          className={`shrink-0 rounded-lg px-3.5 py-2 text-[11px] font-medium transition-all ${
+            input.trim() && !busy
+              ? 'bg-canvas-accent text-white hover:brightness-110 active:scale-95'
+              : 'bg-canvas-border text-gray-500'
+          }`}
           disabled={busy || !input.trim()}
-          onClick={send}
+          onClick={() => send()}
         >
-          send
+          {busy ? '···' : '→'}
         </button>
       </div>
     </div>

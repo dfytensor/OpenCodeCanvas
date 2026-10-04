@@ -10,6 +10,8 @@ import { createChat, chatSend, chatLog } from 'F:/OpenCodeCanvas/src/main/chat'
 import { getGraph } from 'F:/OpenCodeCanvas/src/main/graph/store'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+// curl transport: native http.request hangs intermittently on this Windows box
+process.env.OCC_HTTP = 'curl'
 let fail = 0
 const check = (n: string, c: boolean, x?: string): void => {
   if (c) console.log('  ok -', n)
@@ -43,7 +45,7 @@ async function main() {
   await openProjectWithGraph(projDir)
   const { project } = await import('F:/OpenCodeCanvas/src/main/project/registry').then(async (m) => ({ project: await m.updatePolicy(projDir, { engine: 'native' }) }))
   setActiveProject(project)
-  ensureObserver(projDir)
+  // native engine manages its own status — observer not needed
 
   // seed painful multi-fail history so variant competition triggers
   const orchDir = join(projDir, '.occ', 'orchestrator')
