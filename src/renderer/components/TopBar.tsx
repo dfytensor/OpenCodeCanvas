@@ -13,11 +13,16 @@ export default function TopBar(): React.ReactElement {
   const setEngine = useOccStore((s) => s.setEngine)
   const openProject = useOccStore((s) => s.openProject)
   const closeProject = useOccStore((s) => s.closeProject)
+  const createChat = useOccStore((s) => s.createChat)
   const [showSettings, setShowSettings] = useState(false)
   const [jevKey, setJevKeyInput] = useState(() => window.localStorage.getItem('occ-jev-key') ?? '')
 
   useEffect(() => { void init() }, [init])
   useEffect(() => { if (project && !models) void loadModels() }, [project, models, loadModels])
+  useEffect(() => {
+    const saved = window.localStorage.getItem('occ-jev-key')
+    if (saved) void window.electronAPI.occ.setJevKey(saved)
+  }, [])
 
   const modelValue = project?.policy.defaultModel ?? ''
   const sel = 'rounded-md border border-canvas-border bg-canvas-node px-2 py-1 text-[11px] text-gray-300 outline-none transition-colors focus:border-canvas-accent'
@@ -56,6 +61,14 @@ export default function TopBar(): React.ReactElement {
 
           {/* running indicator */}
           <RunningBadge />
+
+          <button
+            className="rounded-md border border-canvas-border px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-canvas-accent hover:text-canvas-accent"
+            onClick={() => void createChat()}
+            title="新建聊天"
+          >
+            ＋ 聊天
+          </button>
 
           <span className={`inline-block h-2 w-2 rounded-full ${serverReady ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} title={serverReady ? 'engine ready' : 'engine starting…'} />
 
@@ -112,7 +125,7 @@ export default function TopBar(): React.ReactElement {
             className="w-full rounded-md bg-canvas-accent py-1 text-[10px] font-medium text-white hover:brightness-110"
             onClick={() => {
               window.localStorage.setItem('occ-jev-key', jevKey)
-              if (jevKey) (window as any).__occJevKey = jevKey
+              void window.electronAPI.occ.setJevKey(jevKey)
               setShowSettings(false)
             }}
           >

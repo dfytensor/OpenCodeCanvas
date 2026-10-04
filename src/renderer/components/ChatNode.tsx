@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { ChatEntry, NodeStatus, SessionNode } from '../../shared/types'
 import { useOccStore } from '../store/occStore'
@@ -61,7 +61,9 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const log = useOccStore((s) => s.chats[id]) ?? EMPTY_LOG
   const sendChat = useOccStore((s) => s.sendChat)
   const loadChatLog = useOccStore((s) => s.loadChatLog)
+  const abort = useOccStore((s) => s.abort)
   const error = useOccStore((s) => s.error)
+  const graph = useOccStore((s) => s.graph)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const busy = node.status === 'running' || node.status === 'awaiting_input'
@@ -73,6 +75,39 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [log.length])
+
+  // total tokens spent in this chat's whole subtree (workers + verifiers)
+  const tokens = useMemo(() => {
+    if (!graph) return 0
+    const out = new Map<string, string[]>()
+    for (const e of graph.edges) {
+      const arr = out.get(e.source) ?? []
+      arr.push(e.target)
+      out.set(e.source, arr)
+    }
+    let total = 0
+    const seen = new Set<string>([id])
+    const stack = [id]
+    while (stack.length > 0) {
+      const cur = stack.pop() as string
+      const n = graph.nodes[cur]
+      if (n?.tokenUsage) total += n.tokenUsage.input + n.tokenUsage.output
+      for (const t of out.get(cur) ?? []) if (!seen.has(t)) { seen.add(t); stack.push(t) }
+    }
+    return total
+  }, [graph, id])
+
+  // stage label from the latest manager narration
+  const stage = useMemo(() => {
+    for (let i = log.length - 1; i >= 0 && i >= log.length - 5; i--) {
+      const e = log[i]
+      if (e.role !== 'manager') continue
+      if (/plan|拆解|task|route/i.test(e.text)) return '拆解完成，agents 执行中'
+      if (/merged|evaluating|验收|verdict/i.test(e.text)) return '验收中…'
+      if (/round \d|worker|创建|fork/i.test(e.text)) return 'agents 执行中'
+    }
+    return '规划中…'
+  }, [log])
 
   const send = (text?: string): void => {
     const msg = (text ?? input).trim()
@@ -96,7 +131,21 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       <div className="flex items-center gap-2 border-b border-canvas-border px-3 py-2">
         <span className={`inline-block h-2 w-2 rounded-full ${STATUS_DOT[node.status]}`} />
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-200">{node.title}</span>
+        {tokens > 0 && (
+          <span className="shrink-0 rounded-sm bg-canvas-bg px-1 py-px text-[8px] text-gray-500" title="本聊天累计 token（含 worker 与验收员）">
+            {(tokens / 1000).toFixed(1)}k tok
+          </span>
+        )}
         <span className="text-[9px] text-gray-500">{STATUS_LABEL[node.status]}</span>
+        {busy && (
+          <button
+            className="shrink-0 rounded border border-red-500/40 px-1.5 py-px text-[9px] text-red-400 transition-colors hover:bg-red-500/20"
+            onClick={() => void abort(id)}
+            title="中止本聊天的所有工作"
+          >
+            ■ 停止
+          </button>
+        )}
       </div>
 
       {/* messages */}
@@ -137,7 +186,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" style={{ animationDelay: '150ms' }} />
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" style={{ animationDelay: '300ms' }} />
-            <span className="ml-1 text-[9px] text-gray-500">agents working…</span>
+            <span className="ml-1 text-[9px] text-gray-500">{stage}</span>
           </div>
         )}
       </div>
@@ -151,12 +200,12 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       )}
 
       {/* error recovery bar */}
-      {!busy && node.status === 'failed' && log.length > 0 && (() => {
+      {!busy && (node.status === 'failed' || node.status === 'aborted') && log.length > 0 && (() => {
         const lastUser = [...log].reverse().find((e) => e.role === 'user')
         if (!lastUser) return null
         return (
           <div className="mx-2 mb-1 flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-500/5 px-2.5 py-1.5">
-            <span className="text-[10px] text-orange-300">任务失败</span>
+            <span className="text-[10px] text-orange-300">{node.status === 'aborted' ? '已中止' : '任务失败'}</span>
             <div className="flex-1" />
             <button
               className="rounded-md bg-orange-500/20 px-2.5 py-0.5 text-[10px] text-orange-200 transition-colors hover:bg-orange-500/30"
