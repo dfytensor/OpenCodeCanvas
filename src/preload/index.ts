@@ -11,6 +11,7 @@ const api: ElectronAPI = {
     updatePolicy: (patch) => ipcRenderer.invoke('occ:updatePolicy', patch),
     setEngine: (engine) => ipcRenderer.invoke('occ:setEngine', engine),
     setJevKey: (key: string) => ipcRenderer.invoke('occ:setJevKey', key),
+    getLastProject: () => ipcRenderer.invoke('occ:lastProject'),
     openProject: (rootDir) => ipcRenderer.invoke('occ:openProject', rootDir),
     closeProject: () => ipcRenderer.invoke('occ:closeProject'),
     getGraph: () => ipcRenderer.invoke('occ:getGraph'),

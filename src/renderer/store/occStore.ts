@@ -102,6 +102,14 @@ export const useOccStore = create<OccState>()((set, get) => ({
     } catch {
       set({ serverReady: false })
     }
+    // auto-restore the last opened project so the app resumes where it left off
+    try {
+      const last = await window.electronAPI.occ.getLastProject()
+      if (last && !get().project) {
+        await get().openProject(last)
+        if (!get().project) set({ error: null })
+      }
+    } catch { /* first run or restore failed — empty state is fine */ }
   },
 
   refresh: async () => {

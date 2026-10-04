@@ -84,6 +84,11 @@ export function GraphCanvas(): React.ReactElement {
     (n) => n.status === 'running' || n.status === 'awaiting_input'
   ).length
 
+  const totalTok = Object.values(graph.nodes).reduce(
+    (a, n) => a + (n.tokenUsage?.input ?? 0) + (n.tokenUsage?.output ?? 0),
+    0
+  )
+
   const paneMenuItems = (): MenuEntry[] => [
     {
       id: 'new-chat',
@@ -147,13 +152,18 @@ export function GraphCanvas(): React.ReactElement {
 
       <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 rounded-md border border-canvas-border bg-canvas-node/80 px-3 py-1.5 backdrop-blur">
         <span className="text-xs font-semibold text-gray-200">{project.name}</span>
+        {totalTok > 0 && (
+          <span className="text-[10px] text-gray-500" title="项目内全部节点累计 token">
+            {(totalTok / 1000).toFixed(1)}k tok
+          </span>
+        )}
         {running > 0 ? (
           <span className="flex items-center gap-1 text-[10px] text-canvas-accent">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-canvas-accent occ-breathe" />
             frontier · {running} running
           </span>
         ) : (
-          <span className="text-[10px] text-gray-500">idle · {Object.keys(graph.nodes).length} nodes · right-click to add a chat</span>
+          <span className="text-[10px] text-gray-500">idle · {Object.keys(graph.nodes).length} nodes</span>
         )}
       </div>
 

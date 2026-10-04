@@ -30,6 +30,7 @@ import {
 import { diffDirs } from './workspace/diff'
 // ── chat ──
 import { createChat, chatSend, chatLog } from './chat'
+import { readSettings, writeSettings } from './settings'
 
 function requireProject(): string {
   const p = getActiveProject()
@@ -56,13 +57,12 @@ export function registerIpc(): void {
 
   ipcMain.handle('occ:setJevKey', async (_e, key: string) => {
     process.env.OPENROUTER_API_KEY = key
-    // persist for future sessions
-    const settingsFile = join(process.env.OCC_PROJECT_DIR ?? process.env.HOME ?? process.env.USERPROFILE ?? '', '.occ-settings.json')
-    try {
-      const { writeFileSync } = await import('fs')
-      writeFileSync(settingsFile, JSON.stringify({ openrouterKey: key }), 'utf8')
-    } catch { /* best-effort */ }
+    writeSettings({ openrouterKey: key })
     return { ok: true }
+  })
+
+  ipcMain.handle('occ:lastProject', async () => {
+    return readSettings().lastProject ?? null
   })
 
   ipcMain.handle('occ:capabilities', async () => {
@@ -73,6 +73,7 @@ export function registerIpc(): void {
     await ensureServer(rootDir)
     await openProjectWithGraph(rootDir)
     ensureObserver(rootDir)
+    writeSettings({ lastProject: rootDir })
     const project = getActiveProject()
     const graph = await getGraph(rootDir)
     return { project, graph }

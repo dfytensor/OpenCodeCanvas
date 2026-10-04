@@ -2,6 +2,11 @@ import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { registerIpc } from './ipc'
 import { stopServer } from './opencode/server'
+import { readSettings } from './settings'
+
+// restore persisted settings before any window/service boots
+const bootSettings = readSettings()
+if (bootSettings.openrouterKey) process.env.OPENROUTER_API_KEY = bootSettings.openrouterKey
 
 let mainWindow: BrowserWindow | null = null
 
