@@ -10,8 +10,6 @@ import { createChat, chatSend, chatLog } from 'F:/OpenCodeCanvas/src/main/chat'
 import { getGraph } from 'F:/OpenCodeCanvas/src/main/graph/store'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-// curl transport: native http.request hangs intermittently on this Windows box
-process.env.OCC_HTTP = 'curl'
 let fail = 0
 const check = (n: string, c: boolean, x?: string): void => {
   if (c) console.log('  ok -', n)
@@ -61,7 +59,7 @@ async function main() {
   console.log(`[batch ${which}] goal lines: ${goals.length}`)
   await chatSend(projDir, chatId, goals.join('\n') + '\n全部创建后逐一读回验证，然后报告任务完成。')
 
-  const t = await waitFinal(projDir, chatId, 'goal', 0, 7 * 60_000)
+  const t = await waitFinal(projDir, chatId, 0, 7 * 60_000)
   check('final arrived', t.length > 0, '(timeout 7min)')
   console.log('    final:', t.slice(0, 110).replace(/\n/g, ' | '))
 

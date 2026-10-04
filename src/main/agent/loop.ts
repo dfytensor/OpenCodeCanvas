@@ -82,16 +82,34 @@ async function chatCompletion(
   signal: AbortSignal
 ): Promise<ChatResponse> {
   trace(`chatCompletion enter url=${completionsUrl(provider.baseURL)} msgs=${messages.length} tools=${tools.length} http=${process.env.OCC_HTTP ?? 'http'}`)
-  // Use Node native http.request — bypasses undici entirely. undici (fetch)
-  // on Node 24.18 + Windows has a keep-alive race that hangs ~50% of requests
-  // when opencode serve is spawned as a sibling process.
-  if (process.env.OCC_HTTP === 'curl') {
-    trace('curl transport start')
-    const r = await curlCompletion(provider, model, messages, tools)
-    trace('curl transport done')
-    return r
+  // retry with exponential backoff — transient failures (429/5xx/network)
+  // are common with provider APIs, especially under rate limiting
+  const MAX_ATTEMPTS = 4
+  const BACKOFFS = [0, 3000, 10_000, 30_000]
+  let lastErr: unknown
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      if (attempt > 0) {
+        trace(`retry ${attempt}/${MAX_ATTEMPTS - 1} after ${BACKOFFS[attempt]}ms`)
+        await new Promise((r) => setTimeout(r, BACKOFFS[attempt]))
+      }
+      if (process.env.OCC_HTTP === 'curl') {
+        trace('curl transport start')
+        const r = await curlCompletion(provider, model, messages, tools)
+        trace('curl transport done')
+        return r
+      }
+      return await httpCompletion(provider, model, messages, tools, signal)
+    } catch (e) {
+      trace(`attempt ${attempt} failed: ${String(e).slice(0, 160)}`)
+      lastErr = e
+      if (signal.aborted) throw e
+      // non-retryable 4xx (except 429) fail fast
+      const msg = String(e)
+      if (/HTTP 4\d\d/.test(msg) && !/HTTP 429/.test(msg)) throw e
+    }
   }
-  return httpCompletion(provider, model, messages, tools, signal)
+  throw lastErr
 }
 
 /** Raw Node http.request — no undici, no connection pooling, no proxy. */
@@ -111,7 +129,22 @@ function httpCompletion(
     })
     const isHttps = url.protocol === 'https:'
     const mod = isHttps ? require('https') : require('http')
-    const req = mod.request(
+    let settled = false
+    let timer: NodeJS.Timeout | undefined
+    // eslint-disable-next-line prefer-const
+    let req: import('http').ClientRequest
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      fn()
+    }
+    const onAbort = (): void => {
+      req.destroy()
+      finish(() => reject(new Error('request aborted')))
+    }
+    req = mod.request(
       {
         hostname: url.hostname,
         port: url.port || (isHttps ? 443 : 80),
@@ -130,23 +163,28 @@ function httpCompletion(
           try {
             const json = JSON.parse(data) as ChatResponse
             if (!res.statusCode || res.statusCode >= 400) {
-              reject(new Error(`provider HTTP ${res.statusCode}: ${(json.error?.message ?? data).slice(0, 200)}`))
+              finish(() => reject(new Error(`provider HTTP ${res.statusCode}: ${(json.error?.message ?? data).slice(0, 200)}`)))
             } else {
-              resolve(json)
+              finish(() => resolve(json))
             }
           } catch {
-            reject(new Error(`provider non-JSON HTTP ${res.statusCode}: ${data.slice(0, 200)}`))
+            finish(() => reject(new Error(`provider non-JSON HTTP ${res.statusCode}: ${data.slice(0, 200)}`)))
           }
         })
-        res.on('error', reject)
+        res.on('error', (e: Error) => finish(() => reject(e)))
       }
     )
-    req.on('error', reject)
-    const timeout = setTimeout(() => {
-      req.destroy(new Error('provider request timeout (180s)'))
-      reject(new Error('provider request timeout (180s)'))
+    if (signal.aborted) {
+      finish(() => reject(new Error('request aborted')))
+      req.destroy()
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    req.on('error', (e: Error) => finish(() => reject(e)))
+    timer = setTimeout(() => {
+      req.destroy()
+      finish(() => reject(new Error('provider request timeout (180s)')))
     }, 180_000)
-    req.on('close', () => clearTimeout(timeout))
     req.write(body)
     req.end()
   })
@@ -240,14 +278,24 @@ export async function completeChat(opts: {
   messages: AgentMessage[]
   signal?: AbortSignal
 }): Promise<string> {
-  // hard timeout independent of socket/signal state (see chatCompletion note)
+  // hard timeout tied to a real controller so expiry ALWAYS cancels the socket —
+  // racing alone leaks a hung http request per timed-out planner call
+  const ctrl = new AbortController()
+  const onOuter = (): void => ctrl.abort()
+  if (opts.signal) {
+    if (opts.signal.aborted) ctrl.abort()
+    else opts.signal.addEventListener('abort', onOuter, { once: true })
+  }
   let hardTimer: NodeJS.Timeout | undefined
   const hard = new Promise<never>((_, rej) => {
-    hardTimer = setTimeout(() => rej(new Error('planner hard timeout (90s) — socket-level hang')), 90_000)
+    hardTimer = setTimeout(() => {
+      ctrl.abort()
+      rej(new Error('planner hard timeout (90s) — socket-level hang'))
+    }, 90_000)
   })
   try {
     const res = await Promise.race([
-      chatCompletion(opts.provider, opts.model, opts.messages, [], opts.signal ?? new AbortController().signal),
+      chatCompletion(opts.provider, opts.model, opts.messages, [], ctrl.signal),
       hard
     ])
     const msg = (res as ChatResponse).choices?.[0]?.message
@@ -257,6 +305,7 @@ export async function completeChat(opts: {
     throw e
   } finally {
     if (hardTimer) clearTimeout(hardTimer)
+    opts.signal?.removeEventListener('abort', onOuter)
   }
 }
 

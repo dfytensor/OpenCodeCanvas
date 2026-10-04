@@ -11,3 +11,5 @@ dist
 bench-*.json
 bench-final.txt
 emerge-probe-results.json
+agent-bench-results.json
+v-T*.json

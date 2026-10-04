@@ -69,8 +69,7 @@ async function planGoal(
           `Goal: ${goal}\n\n${PLAN_FORMAT}` +
           (historyHint ? `\n\n近期执行经验（本聊天真实结局，据此最小化成本）：\n${historyHint}` : '')
       }
-    ],
-    signal: AbortSignal.timeout(90_000)
+    ]
   })
   const answerMode = /^\s*PLAN:\s*ANSWER/im.test(text)
   const lines = text
@@ -1087,7 +1086,18 @@ async function runAdaptive(
     spent += roundTokens
     if (finished.length > 0) lastPerWorker = Math.round(roundTokens / finished.length)
     if (finished.length === 0) {
-      chat('final', 'all workers failed — pipeline stopped', undefined, cid)
+      const rateLimited = childIds.some((id) => {
+        const n = graph.nodes[id]
+        return !!n?.error && /429|上限|quota|rate.?limit/i.test(n.error)
+      })
+      chat(
+        'final',
+        rateLimited
+          ? '⚠️ provider 限流/配额已用尽（429）——额度恢复后重试即可，无需改代码'
+          : 'all workers failed — pipeline stopped',
+        undefined,
+        cid
+      )
       saveRoutingOutcome(rootDir, {
         chatId: cid,
         shape,
