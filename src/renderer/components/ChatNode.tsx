@@ -66,7 +66,10 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const graph = useOccStore((s) => s.graph)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
-  const busy = node.status === 'running' || node.status === 'awaiting_input'
+  // only truly-working states block typing; awaiting_input MUST stay answerable
+  // or the user can never reply to permission/budget gates (GUI deadlock)
+  const working = node.status === 'running' || node.status === 'provisioning'
+  const awaiting = node.status === 'awaiting_input'
 
   useEffect(() => {
     void loadChatLog(id)
@@ -111,13 +114,17 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
 
   const send = (text?: string): void => {
     const msg = (text ?? input).trim()
-    if (!msg || busy) return
+    if (!msg || working) return
     void sendChat(id, msg)
     setInput('')
   }
 
   const lastEntry = log[log.length - 1]
-  const showTyping = busy && lastEntry?.role !== 'final'
+  const showTyping = working && lastEntry?.role !== 'final'
+  const lastText = lastEntry?.text ?? ''
+  const isPermAsk = awaiting && /权限请求/.test(lastText)
+  const isBudgetAsk = awaiting && /预算/.test(lastText)
+  const gateReplies = isBudgetAsk ? ['继续', '取消'] : ['允许', '全部允许', '拒绝']
 
   return (
     <div
@@ -137,7 +144,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           </span>
         )}
         <span className="text-[9px] text-gray-500">{STATUS_LABEL[node.status]}</span>
-        {busy && (
+        {working && (
           <button
             className="shrink-0 rounded border border-red-500/40 px-1.5 py-px text-[9px] text-red-400 transition-colors hover:bg-red-500/20"
             onClick={() => void abort(id)}
@@ -147,6 +154,30 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           </button>
         )}
       </div>
+
+      {/* gate reply bar: permission / budget asks are answered with one click */}
+      {awaiting && (isPermAsk || isBudgetAsk) && (
+        <div className="mx-2 mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+          <p className="mb-1 text-[10px] font-medium text-amber-300">
+            {isPermAsk ? '🔐 agents 请求权限 — 选择回复' : '💰 预算确认 — 选择回复'}
+          </p>
+          <div className="flex gap-1.5">
+            {gateReplies.map((r) => (
+              <button
+                key={r}
+                className={`rounded-md px-2.5 py-0.5 text-[10px] transition-colors ${
+                  r === '拒绝' || r === '取消'
+                    ? 'border border-red-500/40 text-red-300 hover:bg-red-500/20'
+                    : 'bg-amber-500/20 text-amber-100 hover:bg-amber-500/30'
+                }`}
+                onClick={() => send(r)}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* messages */}
       <div ref={scrollRef} className="flex h-[280px] flex-col gap-1.5 overflow-y-auto p-2">
@@ -200,7 +231,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       )}
 
       {/* error recovery bar */}
-      {!busy && (node.status === 'failed' || node.status === 'aborted') && log.length > 0 && (() => {
+      {!working && (node.status === 'failed' || node.status === 'aborted') && log.length > 0 && (() => {
         const lastUser = [...log].reverse().find((e) => e.role === 'user')
         if (!lastUser) return null
         return (
@@ -227,9 +258,17 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       <div className="flex items-end gap-1.5 border-t border-canvas-border p-2">
         <textarea
           className="h-[42px] min-w-0 flex-1 resize-none rounded-lg border border-canvas-border bg-canvas-bg px-2.5 py-2 text-[11px] text-gray-200 outline-none transition-colors placeholder:text-gray-600 focus:border-canvas-accent"
-          placeholder={busy ? 'agents are working… you can type a follow-up after they finish' : '描述你的目标…（支持多行 = 多个子任务）'}
+          placeholder={
+            awaiting
+              ? isPermAsk || isBudgetAsk
+                ? '或直接输入：允许 / 全部允许 / 拒绝'
+                : '需要你的回复…'
+              : working
+                ? 'agents are working… you can type a follow-up after they finish'
+                : '描述你的目标…（支持多行 = 多个子任务）'
+          }
           value={input}
-          disabled={busy}
+          disabled={working}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
@@ -237,14 +276,14 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
         />
         <button
           className={`shrink-0 rounded-lg px-3.5 py-2 text-[11px] font-medium transition-all ${
-            input.trim() && !busy
+            input.trim() && !working
               ? 'bg-canvas-accent text-white hover:brightness-110 active:scale-95'
               : 'bg-canvas-border text-gray-500'
           }`}
-          disabled={busy || !input.trim()}
+          disabled={working || !input.trim()}
           onClick={() => send()}
         >
-          {busy ? '···' : '→'}
+          {working ? '···' : '→'}
         </button>
       </div>
     </div>
