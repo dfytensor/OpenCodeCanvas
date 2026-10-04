@@ -41,7 +41,13 @@ async function main() {
   await writeFile(join(projDir, 'README.md'), '# app\n')
 
   await openProjectWithGraph(projDir)
-  const { project } = await import('F:/OpenCodeCanvas/src/main/project/registry').then(async (m) => ({ project: await m.updatePolicy(projDir, { engine: 'native' }) }))
+  const { project } = await import('F:/OpenCodeCanvas/src/main/project/registry').then(async (m) => ({
+    project: await m.updatePolicy(projDir, {
+      engine: 'native',
+      toolPermission: 'auto',
+      ...(process.env.OCC_TEST_MODEL ? { defaultModel: process.env.OCC_TEST_MODEL } : {})
+    })
+  }))
   setActiveProject(project)
   // native engine manages its own status — observer not needed
 
