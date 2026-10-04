@@ -1,6 +1,6 @@
 // §8 inherit-node executor: validate -?resolve -?compose -?provision -?// materialize -?bind -?dispatch -?observe. Also hosts the node actions
 // (freeze/archive/send/abort/apply) and the SSE + polling status observer.
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { basename, join } from 'path'
 import { nanoid } from '../ids'
 import type {
@@ -571,6 +571,34 @@ const EVALUATOR_FORMAT =
   'If DONE: the following lines are the final answer for the user (with verification evidence).\n' +
   'Last line: "FITNESS: <0.00-1.00>" — graded score of how completely the goal is met (0 = not at all, 1 = fully, with working verification).\n' +
   'No other prose before the first line.'
+
+/** Detect quality gates present in the project (tsconfig, lint/test scripts) and
+ *  emit one-line instructions for the acceptance verifier. Empty when no gates. */
+function qualityGatesHint(rootDir: string): string {
+  try {
+    const parts: string[] = []
+    if (existsSync(join(rootDir, 'tsconfig.json'))) {
+      parts.push('TypeScript — run `npx tsc --noEmit` (if node_modules is absent, note and skip)')
+    }
+    const pkgPath = join(rootDir, 'package.json')
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { scripts?: Record<string, string> }
+        if (pkg.scripts?.lint) parts.push('lint — run `npm run lint`')
+        if (pkg.scripts?.test) parts.push('tests — run `npm test` when it completes quickly')
+      } catch { /* ignore malformed package.json */ }
+    }
+    if (parts.length === 0) return ''
+    return (
+      ` QUALITY GATES detected in this project: ${parts.join('; ')}. ` +
+      `Run the applicable gates as part of verification. Errors PRE-EXISTING outside ` +
+      `this round's changed files are informational only; errors introduced by the ` +
+      `merged changes FAIL acceptance. Include gate results in your verdict.`
+    )
+  } catch {
+    return ''
+  }
+}
 
 // ── artifact closure: files the goal names as creation targets must exist in root ──
 
@@ -1254,7 +1282,7 @@ async function runAdaptive(
           `The inherited blocks summarize what workers claim, and this workspace IS ` +
           `the merged project root. Verify FUNCTIONALLY: run the code, read the named ` +
           `files, check every requirement (tools are for verification only — do not modify files). ` +
-          `${EVALUATOR_FORMAT}`,
+          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir),
         chatId: cid
       }
     )

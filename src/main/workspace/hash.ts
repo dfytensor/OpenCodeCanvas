@@ -19,6 +19,9 @@ export const EXCLUDE_DIRS: ReadonlySet<string> = new Set([
   '.next',
   '.turbo',
   '.venv',
+  'venv',
+  '__pycache__',
+  'target',
   'coverage'
 ])
 
