@@ -163,6 +163,9 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
           const policy = getActiveProject()?.policy
           const mode = policy?.toolPermission ?? 'ask'
           const needsAsk = mode !== 'auto' && SENSITIVE_TOOLS.has(name) && !session.allowedTools.has(name) && !chatAllows(session.chatId, name)
+          if (process.env.OCC_DEBUG) {
+            console.error(`[gate] ${name} mode=${mode} needsAsk=${needsAsk} sessionAllowed=${session.allowedTools.has(name)} chatAllows=${chatAllows(session.chatId, name)} chatId=${session.chatId ?? 'none'}`)
+          }
           if (needsAsk && jevEnabled()) {
             try {
               const detail = name === 'bash' ? `$ ${String(args.command ?? '')}` : String(args.path ?? '')

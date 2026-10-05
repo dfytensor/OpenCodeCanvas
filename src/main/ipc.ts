@@ -70,9 +70,17 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('occ:openProject', async (_e, rootDir: string) => {
-    await ensureServer(rootDir)
+    // the opencode server is only needed by the opencode engine; native runs
+    // without it. A missing/broken CLI must never block opening a project.
+    try {
+      await ensureServer(rootDir)
+    } catch (e) {
+      console.error('[occ] opencode serve unavailable (native engine unaffected):', String(e).slice(0, 140))
+    }
     await openProjectWithGraph(rootDir)
-    ensureObserver(rootDir)
+    try {
+      ensureObserver(rootDir)
+    } catch { /* observer only matters for server-managed sessions */ }
     writeSettings({ lastProject: rootDir })
     const project = getActiveProject()
     const graph = await getGraph(rootDir)

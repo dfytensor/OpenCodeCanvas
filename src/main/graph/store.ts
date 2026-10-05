@@ -42,11 +42,32 @@ export async function ensureOccDirs(rootDir: string): Promise<OccPaths> {
   return paths
 }
 
-async function writeFileAtomic(file: string, data: string): Promise<void> {
-  const tmp = `${file}.${nanoid(6)}.tmp`
-  await fs.writeFile(tmp, data, 'utf8')
-  await fs.rename(tmp, file)
+async function writeFileAtomicRetry(file: string, data: string): Promise<void> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const tmp = `${file}.${nanoid(6)}.tmp`
+    try {
+      await fs.writeFile(tmp, data, 'utf8')
+      try {
+        await fs.rename(tmp, file)
+      } catch (e) {
+        await fs.unlink(tmp).catch(() => undefined)
+        throw e
+      }
+      return
+    } catch (e) {
+      lastErr = e
+      // Windows: concurrent MoveFileEx to the same target and AV/indexer
+      // scans cause transient EPERM — back off and retry
+      await new Promise((r) => setTimeout(r, 50 * (attempt + 1) * (attempt + 1)))
+    }
+  }
+  throw lastErr
 }
+
+// per-project write serialization — concurrent saveGraph on one root otherwise
+// races their rename steps against each other
+const saveLocks = new Map<string, Promise<unknown>>()
 
 // cache key: rootDir
 const cache = new Map<string, GraphDoc>()
@@ -64,7 +85,12 @@ export async function saveGraph(rootDir: string, graph: GraphDoc): Promise<void>
   graph.updatedAt = new Date().toISOString()
   cache.set(rootDir, graph)
   await ensureOccDirs(rootDir)
-  await writeFileAtomic(occPaths(rootDir).graphJson, JSON.stringify(graph, null, 2))
+  const prev = saveLocks.get(rootDir) ?? Promise.resolve()
+  const task = prev.then(() =>
+    writeFileAtomicRetry(occPaths(rootDir).graphJson, JSON.stringify(graph, null, 2))
+  )
+  saveLocks.set(rootDir, task.catch(() => undefined))
+  await task
 }
 
 export async function getGraph(rootDir: string): Promise<GraphDoc> {

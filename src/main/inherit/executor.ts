@@ -1088,7 +1088,8 @@ async function runAdaptive(
           kind: 'fork',
           channel,
           title: task.slice(0, 24) || `worker-r${round}`,
-          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。'
+          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。',
+          chatId: cid
         })
         childIds.push(res.node.id)
         chat('worker', `▸ spawned: ${task}`, res.node.id, cid)

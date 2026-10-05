@@ -198,16 +198,25 @@ async function startServer(projectDir?: string): Promise<ServerHandle> {
 
   // Confirm readiness: stdout marker ("listening on http://...") or health polling.
   let sawLine = false
+  let errTail = ''
   child.stdout?.setEncoding('utf8')
   child.stdout?.on('data', (chunk: string) => {
     if (chunk.includes('listening on http://')) sawLine = true
+  })
+  child.stderr?.setEncoding('utf8')
+  child.stderr?.on('data', (chunk: string) => {
+    errTail = (errTail + chunk).slice(-300)
   })
 
   const started = Date.now()
   const deadline = started + 15000
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
-      throw new Error(`opencode serve exited early with code ${child.exitCode}`)
+      throw new Error(
+        `opencode serve exited early with code ${child.exitCode}` +
+        (errTail.trim() ? ` — ${errTail.trim().split('\n').pop()?.slice(0, 160)}` : '') +
+        ' (is the opencode CLI installed and on PATH?)'
+      )
     }
     // give stdout a brief window even after the marker, then trust health
     if (sawLine || Date.now() - started > 3000) {
