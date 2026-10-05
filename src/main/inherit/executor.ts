@@ -403,9 +403,17 @@ export async function abortNode(rootDir: string, nodeId: NodeID): Promise<void> 
     agentAbort(nodeId)
     return
   }
-  if (!node.sessionId) return
-  await ocApi.abort(node.sessionId)
-  if (node.status === 'running' || node.status === 'awaiting_input' || node.status === 'provisioning') {
+  if (node.sessionId) await ocApi.abort(node.sessionId).catch(() => undefined)
+  // chat/container node: stopping it means stopping EVERY agent in its subtree —
+  // a bare return here made the ■ 停止 button a silent no-op
+  const { listDescendants } = await import('../graph/store')
+  for (const d of listDescendants(graph, nodeId)) {
+    if (isAgentSession(d.sessionId)) agentAbort(d.id)
+    if (d.status === 'running' || d.status === 'awaiting_input' || d.status === 'provisioning') {
+      await transitionNode(rootDir, d.id, 'aborted').catch(() => undefined)
+    }
+  }
+  if (node.status === 'running' || node.status === 'awaiting_input') {
     await transitionNode(rootDir, nodeId, 'aborted').catch(() => undefined)
   }
 }
@@ -677,11 +685,12 @@ async function budgetGate(
     (a, n) => a + (n.tokenUsage?.input ?? 0) + (n.tokenUsage?.output ?? 0),
     0
   )
-  if (total === 0) return 'continue' // truly first round: nothing spent yet
   const project = getActiveProject()
   const budget = project?.policy.budgetTokensPerChat ?? 0
   if (!budget) return 'continue'
   const estimate = tasks.length * (lastPerWorker || 20_000)
+  // first round: nothing spent yet, but a plan that already blows the whole
+  // budget must still ask — otherwise tiny budgets never protect anything
   if (total + estimate <= budget) return 'continue'
 
   const estK = Math.round(estimate / 1000)

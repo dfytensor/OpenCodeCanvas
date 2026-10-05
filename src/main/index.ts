@@ -41,7 +41,11 @@ function createWindow(): void {
   if (process.env['ELECTRON_RENDERER_URL']) {
     const url = process.env['ELECTRON_RENDERER_URL']
     // dev-only scripted GUI automation (?auto=1) — see renderer/automation.ts
-    mainWindow.loadURL(process.env.OCC_AUTOMATION === '1' ? url + '/?auto=1' : url)
+    mainWindow.loadURL(
+      process.env.OCC_AUTOMATION === '1'
+        ? url + '/?auto=1' + (process.env.OCC_AUTO_SUITE ? '&suite=' + process.env.OCC_AUTO_SUITE : '')
+        : url
+    )
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }

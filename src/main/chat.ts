@@ -6,7 +6,7 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { nanoid } from './ids'
 import type { ChatEntry, NodeID } from '../shared/types'
-import { getGraph, newSessionNode, upsertNode, patchNode } from './graph/store'
+import { getGraph, newSessionNode, upsertNode, patchNode, transitionNode } from './graph/store'
 import { onOccEvent } from './graph/events'
 import { getActiveProject } from './project/registry'
 import { startAdaptivePipeline, budgetPendingFor, resolveBudget } from './inherit/executor'
@@ -79,6 +79,11 @@ export async function chatSend(rootDir: string, chatId: NodeID, text: string): P
       text: verdict === 'deny' ? '已拒绝该操作。' : verdict === 'allow_all' ? '已允许，且本聊天对该类操作免问。' : '已允许执行。',
       time: now()
     })
+    // resume the chat visual state once nothing is pending — without this the
+    // node stays amber "awaiting input" forever after the last answer
+    if (!pendingPermFor(chatId)) {
+      await transitionNode(rootDir, chatId, 'running').catch(() => undefined)
+    }
     return
   }
 
