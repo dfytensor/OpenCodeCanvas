@@ -69,6 +69,20 @@ export function GraphCanvas(): React.ReactElement {
     prevCount.current = count
   }, [graph, rf])
 
+  // one-shot focus requests (e.g. "N awaiting input" badge) pan to the node
+  const focusNode = useOccStore((s) => s.focusNode)
+  useEffect(() => {
+    if (!focusNode) return
+    const n = rf.getNode(focusNode)
+    if (n) {
+      rf.setCenter(n.position.x + 190, n.position.y + 150, {
+        zoom: Math.max(rf.getZoom(), 0.85),
+        duration: 500
+      })
+    }
+    useOccStore.setState({ focusNode: null })
+  }, [focusNode, rf])
+
   if (!graph || !project) {
     return (
       <div className="flex h-full items-center justify-center">

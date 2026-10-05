@@ -62,7 +62,6 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const sendChat = useOccStore((s) => s.sendChat)
   const loadChatLog = useOccStore((s) => s.loadChatLog)
   const abort = useOccStore((s) => s.abort)
-  const error = useOccStore((s) => s.error)
   const graph = useOccStore((s) => s.graph)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -129,7 +128,11 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   return (
     <div
       className={`occ-born flex w-[380px] flex-col overflow-hidden rounded-xl border bg-canvas-node/95 shadow-lg backdrop-blur ${
-        selected ? 'border-canvas-accent shadow-[0_0_18px_rgba(47,129,247,0.35)]' : 'border-canvas-border'
+        selected
+          ? 'border-canvas-accent shadow-[0_0_18px_rgba(47,129,247,0.35)]'
+          : awaiting
+            ? 'border-amber-500/70 shadow-[0_0_14px_rgba(251,191,36,0.25)]'
+            : 'border-canvas-border'
       }`}
     >
       <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-none !bg-gray-500" />
@@ -221,14 +224,6 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           </div>
         )}
       </div>
-
-      {/* error banner */}
-      {error && (
-        <div className="mx-2 mb-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5">
-          <p className="text-[10px] text-red-300">{error}</p>
-          <button className="mt-0.5 text-[9px] text-red-400 underline hover:text-red-300" onClick={() => useOccStore.setState({ error: null })}>dismiss</button>
-        </div>
-      )}
 
       {/* error recovery bar */}
       {!working && (node.status === 'failed' || node.status === 'aborted') && log.length > 0 && (() => {

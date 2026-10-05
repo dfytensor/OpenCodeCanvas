@@ -45,6 +45,9 @@ interface OccState {
   chats: Record<NodeID, ChatEntry[]>
   wizardOpen: boolean
   inspectCache: Record<NodeID, ContentManifest>
+  /** one-shot signal: GraphCanvas pans to this node then clears it */
+  focusNode: NodeID | null
+  requestFocus: (id: NodeID) => void
 
   init: () => Promise<void>
   refresh: () => Promise<void>
@@ -94,6 +97,9 @@ export const useOccStore = create<OccState>()((set, get) => ({
   chats: {},
   wizardOpen: false,
   inspectCache: {},
+  focusNode: null,
+
+  requestFocus: (id) => set({ focusNode: id }),
 
   init: async () => {
     try {

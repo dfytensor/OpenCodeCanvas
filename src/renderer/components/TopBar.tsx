@@ -16,6 +16,8 @@ export default function TopBar(): React.ReactElement {
   const createChat = useOccStore((s) => s.createChat)
   const [showSettings, setShowSettings] = useState(false)
   const [jevKey, setJevKeyInput] = useState(() => window.localStorage.getItem('occ-jev-key') ?? '')
+  const [budgetK, setBudgetK] = useState(() => String(Math.round((project?.policy.budgetTokensPerChat ?? 0) / 1000)))
+  const [permMode, setPermMode] = useState<'ask' | 'auto'>(project?.policy.toolPermission ?? 'ask')
 
   useEffect(() => { void init() }, [init])
   useEffect(() => { if (project && !models) void loadModels() }, [project, models, loadModels])
@@ -61,6 +63,7 @@ export default function TopBar(): React.ReactElement {
 
           {/* running indicator */}
           <RunningBadge />
+          <AwaitingBadge />
 
           <button
             className="rounded-md border border-canvas-border px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-canvas-accent hover:text-canvas-accent"
@@ -94,9 +97,13 @@ export default function TopBar(): React.ReactElement {
       )}
 
       {error && (
-        <span className="max-w-[240px] truncate rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300" title={error}>
-          {error}
-        </span>
+        <button
+          className="max-w-[240px] truncate rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300"
+          title={`${error}（点击关闭）`}
+          onClick={() => useOccStore.setState({ error: null })}
+        >
+          {error} ✕
+        </button>
       )}
 
       {/* settings gear */}
@@ -121,11 +128,42 @@ export default function TopBar(): React.ReactElement {
               onChange={(e) => setJevKeyInput(e.target.value)}
             />
           </label>
+          {project && (
+            <>
+              <label className="mb-2 block text-[10px] text-gray-400">
+                聊天预算（k tokens，0 = 不限，超支时询问）
+                <input
+                  type="number"
+                  min={0}
+                  className="mt-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
+                  value={budgetK}
+                  onChange={(e) => setBudgetK(e.target.value)}
+                />
+              </label>
+              <label className="mb-3 block text-[10px] text-gray-400">
+                敏感工具（写文件 / 命令）
+                <select
+                  className="mt-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
+                  value={permMode}
+                  onChange={(e) => setPermMode(e.target.value as 'ask' | 'auto')}
+                >
+                  <option value="ask">每次询问（默认）</option>
+                  <option value="auto">自动放行（信任本机环境）</option>
+                </select>
+              </label>
+            </>
+          )}
           <button
             className="w-full rounded-md bg-canvas-accent py-1 text-[10px] font-medium text-white hover:brightness-110"
             onClick={() => {
               window.localStorage.setItem('occ-jev-key', jevKey)
               void window.electronAPI.occ.setJevKey(jevKey)
+              if (project) {
+                void window.electronAPI.occ
+                  .updatePolicy({ budgetTokensPerChat: Math.max(0, Number(budgetK) || 0) * 1000, toolPermission: permMode })
+                  .then((p) => useOccStore.setState({ project: p }))
+                  .catch(() => undefined)
+              }
               setShowSettings(false)
             }}
           >
@@ -146,5 +184,22 @@ function RunningBadge(): React.ReactElement | null {
       <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
       {running} running
     </span>
+  )
+}
+
+function AwaitingBadge(): React.ReactElement | null {
+  const graph = useOccStore((s) => s.graph)
+  const requestFocus = useOccStore((s) => s.requestFocus)
+  const waiting = graph ? Object.values(graph.nodes).filter((n) => n.status === 'awaiting_input') : []
+  if (waiting.length === 0) return null
+  return (
+    <button
+      className="flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:bg-amber-400/20"
+      onClick={() => requestFocus(waiting[0].id)}
+      title="点击定位到等待你回复的聊天"
+    >
+      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+      {waiting.length} 等待回复
+    </button>
   )
 }
