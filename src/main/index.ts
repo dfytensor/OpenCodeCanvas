@@ -31,6 +31,8 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
   })
+  // user looked at the app — stop flashing the taskbar
+  mainWindow.on('focus', () => mainWindow?.flashFrame(false))
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

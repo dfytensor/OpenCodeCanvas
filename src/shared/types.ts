@@ -349,6 +349,8 @@ export interface ElectronAPI {
     setEngine: (engine: AgentEngine) => Promise<Project>
     setJevKey: (key: string) => Promise<{ ok: boolean }>
     getLastProject: () => Promise<string | null>
+    flash: () => Promise<{ ok: boolean }>
+    openProjectDir: () => Promise<string>
     openProject: (rootDir: string) => Promise<{ project: Project; graph: GraphDoc } | null>
     closeProject: () => Promise<void>
     getGraph: () => Promise<GraphDoc | null>

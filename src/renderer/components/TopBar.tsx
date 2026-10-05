@@ -14,6 +14,8 @@ export default function TopBar(): React.ReactElement {
   const openProject = useOccStore((s) => s.openProject)
   const closeProject = useOccStore((s) => s.closeProject)
   const createChat = useOccStore((s) => s.createChat)
+  const sidebarOpen = useOccStore((s) => s.sidebarOpen)
+  const setSidebar = useOccStore((s) => s.setSidebar)
   const [showSettings, setShowSettings] = useState(false)
   const [jevKey, setJevKeyInput] = useState(() => window.localStorage.getItem('occ-jev-key') ?? '')
   const [budgetK, setBudgetK] = useState(() => String(Math.round((project?.policy.budgetTokensPerChat ?? 0) / 1000)))
@@ -71,6 +73,26 @@ export default function TopBar(): React.ReactElement {
             title="新建聊天"
           >
             ＋ 聊天
+          </button>
+
+          <button
+            className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+              sidebarOpen
+                ? 'border-canvas-accent/60 text-canvas-accent'
+                : 'border-canvas-border text-gray-400 hover:text-gray-300'
+            }`}
+            onClick={() => setSidebar(!sidebarOpen)}
+            title="聊天列表"
+          >
+            ▤
+          </button>
+
+          <button
+            className="rounded-md border border-canvas-border px-2 py-1 text-[11px] text-gray-400 transition-colors hover:text-gray-300"
+            onClick={() => void window.electronAPI.occ.openProjectDir()}
+            title="在资源管理器中打开项目目录"
+          >
+            📁
           </button>
 
           <span className={`inline-block h-2 w-2 rounded-full ${serverReady ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} title={serverReady ? 'engine ready' : 'engine starting…'} />

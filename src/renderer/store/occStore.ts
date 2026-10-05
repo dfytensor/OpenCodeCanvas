@@ -48,6 +48,14 @@ interface OccState {
   /** one-shot signal: GraphCanvas pans to this node then clears it */
   focusNode: NodeID | null
   requestFocus: (id: NodeID) => void
+  /** collapsible chat list sidebar */
+  sidebarOpen: boolean
+  setSidebar: (open: boolean) => void
+  /** diff viewer: node whose workspace diff is on screen */
+  diffNode: NodeID | null
+  diffText: string
+  showDiff: (nodeId: NodeID) => Promise<void>
+  closeDiff: () => void
 
   init: () => Promise<void>
   refresh: () => Promise<void>
@@ -100,6 +108,22 @@ export const useOccStore = create<OccState>()((set, get) => ({
   focusNode: null,
 
   requestFocus: (id) => set({ focusNode: id }),
+
+  sidebarOpen: false,
+  setSidebar: (open) => set({ sidebarOpen: open }),
+
+  diffNode: null,
+  diffText: '',
+  showDiff: async (nodeId) => {
+    set({ diffNode: nodeId, diffText: 'loading…' })
+    try {
+      const text = await window.electronAPI.occ.nodeDiff(nodeId)
+      set({ diffText: text || '(no changes in this workspace)' })
+    } catch (e) {
+      set({ diffText: String(e) })
+    }
+  },
+  closeDiff: () => set({ diffNode: null, diffText: '' }),
 
   init: async () => {
     try {
@@ -194,6 +218,14 @@ export const useOccStore = create<OccState>()((set, get) => ({
     try {
       const id = await window.electronAPI.occ.createChat()
       await s.refresh()
+      // cascade-pin top-bar-created chats so they never stack on (0,0)
+      const g = get().graph
+      if (g && s.project) {
+        const roots = Object.values(g.nodes).filter((n) => n.kind === 'root' && n.parents.length === 0)
+        const n = Math.max(0, roots.length - 1)
+        const { pinPosition } = await import('../lib/layout')
+        pinPosition(s.project.id, id, { x: 60 + (n % 6) * 90, y: 60 + (n % 6) * 80 })
+      }
       return id
     } catch (e) {
       set({ error: String(e) })

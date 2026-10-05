@@ -65,6 +65,16 @@ export function registerIpc(): void {
     return readSettings().lastProject ?? null
   })
 
+  ipcMain.handle('occ:flash', async () => {
+    for (const win of BrowserWindow.getAllWindows()) win.flashFrame(true)
+    return { ok: true }
+  })
+
+  ipcMain.handle('occ:openProjectDir', async () => {
+    const { shell } = await import('electron')
+    return shell.openPath(requireProject())
+  })
+
   ipcMain.handle('occ:capabilities', async () => {
     return probeCapabilities()
   })

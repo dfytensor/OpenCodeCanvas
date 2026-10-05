@@ -148,6 +148,7 @@ export const OccNode = memo(function OccNode({ id, data, selected }: NodeProps):
           )}
           <div className="mt-1.5 flex flex-wrap gap-1 border-t border-canvas-border pt-1.5">
             {[
+              { label: '⇄ diff', disabled: !node.workDir, fn: () => void useOccStore.getState().showDiff(node.id) },
               { label: '⎇ inherit', fn: () => setWizard(true), disabled: false },
               { label: node.status === 'frozen' ? '♨ unfreeze' : '❄ freeze', disabled: node.status !== 'frozen' && node.status !== 'completed', fn: () => void (node.status === 'frozen' ? unfreeze(node.id) : freeze(node.id)) },
               { label: '▤ archive', disabled: node.status !== 'frozen', fn: () => void archive(node.id) },
