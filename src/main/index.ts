@@ -45,7 +45,7 @@ function createWindow(): void {
     // dev-only scripted GUI automation (?auto=1) — see renderer/automation.ts
     mainWindow.loadURL(
       process.env.OCC_AUTOMATION === '1'
-        ? url + '/?auto=1' + (process.env.OCC_AUTO_SUITE ? '&suite=' + process.env.OCC_AUTO_SUITE : '')
+        ? url + '/?auto=1' + (process.env.OCC_AUTO_SUITE ? '&suite=' + process.env.OCC_AUTO_SUITE : '') + (process.env.OCC_AUTO_PARAMS ? '&' + process.env.OCC_AUTO_PARAMS : '')
         : url
     )
   } else {

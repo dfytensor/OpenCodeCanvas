@@ -27,7 +27,7 @@ export function ChatSidebar(): React.ReactElement | null {
     .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
 
   return (
-    <div className="absolute left-3 top-14 z-20 flex max-h-[70%] w-60 flex-col overflow-hidden rounded-lg border border-canvas-border bg-canvas-node/95 shadow-xl backdrop-blur">
+    <div data-occ="chat-sidebar" className="absolute left-3 top-14 z-20 flex max-h-[70%] w-60 flex-col overflow-hidden rounded-lg border border-canvas-border bg-canvas-node/95 shadow-xl backdrop-blur">
       <div className="flex items-center gap-2 border-b border-canvas-border px-3 py-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">聊天 · {chats.length}</span>
         <div className="flex-1" />
@@ -48,6 +48,7 @@ export function ChatSidebar(): React.ReactElement | null {
           return (
             <button
               key={c.id}
+              data-occ="chat-list-item"
               className={`mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-canvas-border ${
                 active ? 'bg-canvas-accent/15' : ''
               }`}

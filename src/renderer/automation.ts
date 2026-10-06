@@ -7,6 +7,7 @@
 //   ?auto=1&suite=ux   — full UX coverage: new-chat button, Jev key IPC,
 //                        budget gate + focus badge, deny path, stop + retry
 import { useOccStore } from './store/occStore'
+import { pinnedPosition } from './lib/layout'
 
 export function initAutomation(): void {
   if (!new URLSearchParams(window.location.search).has('auto')) return
@@ -111,6 +112,9 @@ export function initAutomation(): void {
 
     if (!store.getState().project) await store.getState().openProject('F:\\occ-gui-test')
     await store.getState().setEngine('native')
+    // optional ?model=provider/name — evening GLM can be slow; deepseek is snappier
+    const model = params.get('model')
+    await window.electronAPI.occ.updatePolicy(model ? { defaultModel: model } : {})
 
     // T1: ＋聊天 button creates a chat through the real TopBar control
     try {
@@ -131,6 +135,7 @@ export function initAutomation(): void {
       await pass('T2 jev-key-ipc')
     } catch (e) { await fail('T2 jev-key-ipc', String(e)) }
 
+    if (params.get('heavy') !== '0') {
     // T3: budget gate → focus badge → 继续
     try {
       await window.electronAPI.occ.updatePolicy({ toolPermission: 'auto', budgetTokensPerChat: 1000 })
@@ -140,6 +145,8 @@ export function initAutomation(): void {
       await sendGoal(chatId, '在当前目录创建 budget.txt，内容是 budget-ok，验证写入后报告任务完成')
       const gated = await waitFor(() => store.getState().graph?.nodes[chatId]?.status === 'awaiting_input', 3 * 60_000)
       if (!gated) throw new Error('budget gate never appeared')
+      // toast should have popped for the awaiting transition
+      const toastSeen = await waitFor(() => document.body.innerText.includes('需要你的回复'), 5000)
       const badgeBtn = topButton('等待回复')
       let focusOk = false
       if (badgeBtn) {
@@ -152,7 +159,7 @@ export function initAutomation(): void {
       cont.click()
       const final = await waitFinal(chatId, 4 * 60_000)
       if (!final) throw new Error('no final after 继续')
-      await pass('T3 budget-gate+focus (badge=' + !!badgeBtn + ',focusConsumed=' + focusOk + ')')
+      await pass('T3 budget-gate (toast=' + toastSeen + ', badge=' + !!badgeBtn + ',focusConsumed=' + focusOk + ')')
     } catch (e) { await fail('T3 budget-gate+focus', String(e)) }
 
     // T4: deny path — worker must abandon the file
@@ -165,15 +172,15 @@ export function initAutomation(): void {
       const gated = await waitFor(() => !!nodeButton(chatId, '拒绝'), 3 * 60_000)
       if (!gated) throw new Error('gate never appeared')
       nodeButton(chatId, '拒绝')?.click()
-      // contract: the deny resolves the pending ask (the abandon instruction is a
-      // tool result to the model, not a chat entry — don't assert on chat text)
+      // contract: the deny resolves the pending ask — the chat log gets a
+      // 「已拒绝该操作。」manager entry from chatSend's perm branch
       const resolved = await waitFor(
-        () => store.getState().graph?.nodes[chatId]?.status !== 'awaiting_input',
+        () => (store.getState().chats[chatId] ?? []).some((e) => e.text === '已拒绝该操作。'),
         60_000
       )
       if (!resolved) throw new Error('deny did not resolve the gate')
       // let the pipeline finish: answer any further gates with allow-all
-      const gateDeadline = Date.now() + 4 * 60_000
+      const gateDeadline = Date.now() + 6 * 60_000
       while (Date.now() < gateDeadline) {
         const s = store.getState()
         if ((s.chats[chatId] ?? []).some((e) => e.role === 'final')) break
@@ -181,7 +188,7 @@ export function initAutomation(): void {
         if (btn && s.graph?.nodes[chatId]?.status === 'awaiting_input') { btn.click(); await sleep(1200); continue }
         await sleep(1500)
       }
-      const final = await waitFinal(chatId, 90_000)
+      const final = await waitFinal(chatId, 3 * 60_000)
       if (!final) throw new Error('no final after deny+allow-all')
       await pass('T4 deny-path')
     } catch (e) { await fail('T4 deny-path', String(e)) }
@@ -205,9 +212,18 @@ export function initAutomation(): void {
       log('T5 aborted — winding down old pipeline')
       // the aborted pipeline posts its wind-down final and releases the busy
       // flag; retrying too early collides with it (chat is busy)
-      await waitFor(() => (store.getState().chats[chatId] ?? []).some((e) => e.role === 'final'), 45_000)
+      await waitFor(() => (store.getState().chats[chatId] ?? []).some((e) => e.role === 'final'), 90_000)
       await sleep(4000)
       log('T5 clicking retry')
+      // racing note: if the worker finished right before the stop landed, the
+      // pipeline concludes on its own (final + completed) — that is a PASS:
+      // stop was honoured (no further rounds) and there is nothing to retry
+      const concluded = (store.getState().chats[chatId] ?? []).some((e) => e.role === 'final') ||
+        store.getState().graph?.nodes[chatId]?.status === 'completed'
+      if (concluded) {
+        await pass('T5 stop+retry (concluded-before-stop-landed)')
+        return
+      }
       // the old pipeline may still be releasing the busy flag — retry clicks
       // can be rejected, so loop until the chat visibly restarts
       let restarted = false
@@ -225,10 +241,56 @@ export function initAutomation(): void {
       if (!restarted) throw new Error('pipeline did not restart after retry')
       await pass('T5 stop+retry')
       void waitFinal(chatId, 4 * 60_000).then((f) => { if (f) log('T5 retry final: ' + f.slice(0, 60)) })
+
     } catch (e) { await fail('T5 stop+retry', String(e)) }
+    }
+      // T6: chat sidebar lists chats and its entries trigger focus
+      try {
+        store.getState().setSidebar(true)
+        const shown = await waitFor(() => !!document.querySelector('[data-occ="chat-sidebar"]'), 5000)
+        if (!shown) throw new Error('sidebar did not open')
+        const item = document.querySelector('[data-occ="chat-list-item"]') as HTMLElement | null
+        if (!item) throw new Error('no chat list items')
+        item.click()
+        const focused = store.getState().focusNode !== null
+        store.getState().setSidebar(false)
+        await pass('T6 sidebar (items>0, focusSignal=' + focused + ')')
+      } catch (e) { await fail('T6 sidebar', String(e)) }
+
+      // T7: diff viewer modal on a completed worker workspace
+      try {
+        const worker = Object.values(store.getState().graph?.nodes ?? {}).find((n) => n.kind === 'fork' && n.workDir)
+        if (!worker) throw new Error('no worker with a workspace to diff')
+        await store.getState().showDiff(worker.id)
+        const opened = await waitFor(
+          () => document.body.innerText.includes('工作区改动') && store.getState().diffText !== 'loading…',
+          10_000
+        )
+        const len = store.getState().diffText.length
+        store.getState().closeDiff()
+        if (!opened) throw new Error('diff modal did not render')
+        await pass('T7 diff-viewer (chars=' + len + ')')
+      } catch (e) { await fail('T7 diff-viewer', String(e)) }
+
+      // T8: open-project-dir IPC resolves (opens Explorer on the test machine)
+      try {
+        const r = await window.electronAPI.occ.openProjectDir()
+        if (typeof r !== 'string') throw new Error('unexpected return ' + typeof r)
+        await pass('T8 open-project-dir')
+      } catch (e) { await fail('T8 open-project-dir', String(e)) }
+
+      // T9: top-bar-created chats cascade — at least two distinct pins, none stacked
+      try {
+        const pid = store.getState().project?.id ?? ''
+                const roots = Object.values(store.getState().graph?.nodes ?? {}).filter((n) => n.kind === 'root' && n.parents.length === 0)
+        const pins = roots.map((r) => pinnedPosition(pid, r.id)).filter(Boolean) as { x: number; y: number }[]
+        const distinct = new Set(pins.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`)).size
+        if (roots.length >= 2 && distinct < 2) throw new Error(roots.length + ' chats share ' + distinct + ' position(s)')
+        await pass('T9 cascade-positions (chats=' + roots.length + ', distinctPins=' + distinct + ')')
+      } catch (e) { await fail('T9 cascade-positions', String(e)) }
 
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/5: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/9: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)

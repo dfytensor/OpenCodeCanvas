@@ -7,7 +7,7 @@ import { existsSync } from 'fs'
 import { nanoid } from './ids'
 import type { ChatEntry, NodeID } from '../shared/types'
 import { getGraph, newSessionNode, upsertNode, patchNode, transitionNode } from './graph/store'
-import { onOccEvent } from './graph/events'
+import { onOccEvent, emitOccEvent } from './graph/events'
 import { getActiveProject } from './project/registry'
 import { startAdaptivePipeline, budgetPendingFor, resolveBudget } from './inherit/executor'
 import { pendingPermFor, resolvePendingPerm } from './agent/session'
@@ -73,11 +73,15 @@ export async function chatSend(rootDir: string, chatId: NodeID, text: string): P
   if (pendingPermFor(chatId)) {
     await appendChat(rootDir, chatId, { id: nanoid(6), role: 'user', text, time: now() })
     const verdict = resolvePendingPerm(chatId, text)
-    await appendChat(rootDir, chatId, {
-      id: nanoid(6),
+    // emit (not appendChat): the pipeline wrapper persists this event into the
+    // log AND the renderer subscription surfaces it live — appendChat alone
+    // would leave the UI blind to the resolution
+    emitOccEvent({
+      type: 'pipeline.chat',
       role: 'manager',
       text: verdict === 'deny' ? '已拒绝该操作。' : verdict === 'allow_all' ? '已允许，且本聊天对该类操作免问。' : '已允许执行。',
-      time: now()
+      nodeId: chatId,
+      chatId
     })
     // resume the chat visual state once nothing is pending — without this the
     // node stays amber "awaiting input" forever after the last answer
@@ -96,11 +100,12 @@ export async function chatSend(rootDir: string, chatId: NodeID, text: string): P
   }
 
   if (busyChats.has(chatId)) {
-    await appendChat(rootDir, chatId, {
-      id: nanoid(6),
+    emitOccEvent({
+      type: 'pipeline.chat',
       role: 'manager',
       text: 'still working on the previous goal — wait for it to finish (or abort the running nodes).',
-      time: now()
+      nodeId: chatId,
+      chatId
     })
     return
   }

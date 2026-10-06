@@ -28,6 +28,8 @@ interface AgentSession {
   tools: Tool[]
   busy: boolean
   aborted: boolean
+  /** cancels the in-flight provider call the moment the session is aborted */
+  ctrl: AbortController
   chatId?: NodeID
   allowedTools: Set<string>
 }
@@ -194,6 +196,7 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
         }
       },
       maxSteps: 32,
+      signal: session.ctrl.signal,
       callbacks: {
         onUsage: (u) => {
           // meter per-step so costs are visible even if the turn times out
@@ -242,10 +245,10 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
     }
   } catch (e) {
     await patchNode(rootDir, session.nodeId, {
-      status: 'failed',
+      status: session.aborted ? 'aborted' : 'failed',
       error: String(e).slice(0, 300)
     }).catch(() => undefined)
-    chat('worker', `✗ ${session.title} failed: ${String(e).slice(0, 300)}`, session.nodeId, session.chatId)
+    chat('worker', `${session.aborted ? '■' : '✗'} ${session.title} ${session.aborted ? 'aborted' : 'failed'}: ${String(e).slice(0, 300)}`, session.nodeId, session.chatId)
   } finally {
     session.busy = false
   }
@@ -279,6 +282,7 @@ export async function startAgentSession(
     tools: opts.noTools ? [] : buildTools(workDir),
     busy: false,
     aborted: false,
+    ctrl: new AbortController(),
     chatId: opts.chatId,
     allowedTools: opts.allowAllTools ? new Set<string>(['bash', 'write_file', 'edit_file']) : new Set<string>()
   }
@@ -314,7 +318,13 @@ export async function agentSend(rootDir: string, nodeId: NodeID, message: string
 }
 
 export function agentAbort(nodeId: NodeID): void {
-  for (const s of sessions.values()) if (s.nodeId === nodeId) s.aborted = true
+  for (const s of sessions.values()) {
+    if (s.nodeId !== nodeId) continue
+    s.aborted = true
+    // cancel any in-flight provider call immediately — a flag alone lets a
+    // chatty worker keep spending tokens for minutes past the stop click
+    s.ctrl.abort()
+  }
 }
 
 export function isAgentSession(sessionId: string | undefined): boolean {

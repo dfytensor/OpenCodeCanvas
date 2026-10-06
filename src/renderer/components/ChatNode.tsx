@@ -225,8 +225,9 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
         )}
       </div>
 
-      {/* error recovery bar */}
-      {!working && (node.status === 'failed' || node.status === 'aborted') && log.length > 0 && (() => {
+      {/* error recovery bar — an aborted chat that already has a verdict
+          concluded before the stop landed; there is nothing to retry */}
+      {!working && (node.status === 'failed' || (node.status === 'aborted' && !log.some((e) => e.role === 'final'))) && log.length > 0 && (() => {
         const lastUser = [...log].reverse().find((e) => e.role === 'user')
         if (!lastUser) return null
         return (
