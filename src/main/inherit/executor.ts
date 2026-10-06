@@ -35,7 +35,7 @@ import { isAgentSession, agentSend, agentAbort, startAgentSession } from '../age
 import { hashDirFast } from '../workspace/hash'
 import { completeChat } from '../agent/loop'
 import { usableModelRefs } from '../agent/providers'
-import { resolveAgentModel } from '../agent/providers'
+import { resolveAgentModel, resolveAgentModelChain } from '../agent/providers'
 
 // ───────────────────────── round-0 planner: task + cost + topology ─────────────────────────
 
@@ -56,30 +56,40 @@ async function planGoal(
   historyHint?: string
 ): Promise<{ mode: 'answer' | 'build'; tasks: string[]; answer: string }> {
   const project = getActiveProject()
-  const resolved = resolveAgentModel(project?.policy.defaultModel)
-  if (!resolved) throw new Error('no provider available for planner')
-  const text = await completeChat({
-    provider: resolved.provider,
-    model: resolved.model,
-    messages: [
-      { role: 'system', content: 'You are the planner of an agent pipeline. Route the goal at minimal cost.' },
-      {
-        role: 'user',
-        content:
-          `Goal: ${goal}\n\n${PLAN_FORMAT}` +
-          (historyHint ? `\n\n近期执行经验（本聊天真实结局，据此最小化成本）：\n${historyHint}` : '')
+  // walk the provider chain: a rate-limited or broken primary must not kill
+  // the pipeline before it even starts
+  const chain = resolveAgentModelChain(project?.policy.defaultModel)
+  if (chain.length === 0) throw new Error('no provider available for planner')
+  const messages = [
+    { role: 'system' as const, content: 'You are the planner of an agent pipeline. Route the goal at minimal cost.' },
+    {
+      role: 'user' as const,
+      content:
+        `Goal: ${goal}\n\n${PLAN_FORMAT}` +
+        (historyHint ? `\n\n近期执行经验（本聊天真实结局，据此最小化成本）：\n${historyHint}` : '')
+    }
+  ]
+  let lastErr: unknown
+  for (const resolved of chain) {
+    try {
+      const text = await completeChat({ provider: resolved.provider, model: resolved.model, messages })
+      const answerMode = /^\s*PLAN:\s*ANSWER/im.test(text)
+      const lines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !/^PLAN:/i.test(l))
+      if (answerMode) return { mode: 'answer', tasks: [], answer: lines.join('\n').trim() }
+      const tasks = lines.slice(0, 3)
+      if (tasks.length === 0) return { mode: 'answer', tasks: [], answer: goal }
+      return { mode: 'build', tasks, answer: '' }
+    } catch (e) {
+      lastErr = e
+      if (chain.length > 1) {
+        chat('manager', `⚠ 规划器 ${resolved.provider.id}/${resolved.model} 不可用（${String(e).slice(0, 60)}）— 尝试下一个模型`, undefined, undefined)
       }
-    ]
-  })
-  const answerMode = /^\s*PLAN:\s*ANSWER/im.test(text)
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !/^PLAN:/i.test(l))
-  if (answerMode) return { mode: 'answer', tasks: [], answer: lines.join('\n').trim() }
-  const tasks = lines.slice(0, 3)
-  if (tasks.length === 0) return { mode: 'answer', tasks: [], answer: goal }
-  return { mode: 'build', tasks, answer: '' }
+    }
+  }
+  throw lastErr
 }
 
 // ───────────────────────── base resolution (§3.5) ─────────────────────────
@@ -580,9 +590,23 @@ const EVALUATOR_FORMAT =
   'Last line: "FITNESS: <0.00-1.00>" — graded score of how completely the goal is met (0 = not at all, 1 = fully, with working verification).\n' +
   'No other prose before the first line.'
 
+/** Project memory: .occ/CONTEXT.md is the user-curated ground truth (stack,
+ *  conventions, landmines). Injected into every worker and verifier so the
+ *  first attempt already knows the project — fewer rounds, fewer tokens. */
+async function projectContextHint(rootDir: string): Promise<string> {
+  try {
+    const { readFile } = await import('fs/promises')
+    const raw = await readFile(join(rootDir, '.occ', 'CONTEXT.md'), 'utf8')
+    const trimmed = raw.slice(0, 2000).trim()
+    if (!trimmed) return ''
+    return `\n\n项目背景（.occ/CONTEXT.md 摘录 — 其中的约定必须遵守）：\n${trimmed}`
+  } catch {
+    return ''
+  }
+}
+
 /** Detect quality gates present in the project (tsconfig, lint/test scripts) and
- *  emit one-line instructions for the acceptance verifier. Empty when no gates. */
-function qualityGatesHint(rootDir: string): string {
+ *  emit one-line instructions for the acceptance verifier. Empty when no gates. */function qualityGatesHint(rootDir: string): string {
   try {
     const parts: string[] = []
     if (existsSync(join(rootDir, 'tsconfig.json'))) {
@@ -1097,7 +1121,7 @@ async function runAdaptive(
           kind: 'fork',
           channel,
           title: task.slice(0, 24) || `worker-r${round}`,
-          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。',
+          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir),
           chatId: cid
         })
         childIds.push(res.node.id)
@@ -1292,7 +1316,7 @@ async function runAdaptive(
           `The inherited blocks summarize what workers claim, and this workspace IS ` +
           `the merged project root. Verify FUNCTIONALLY: run the code, read the named ` +
           `files, check every requirement (tools are for verification only — do not modify files). ` +
-          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir),
+          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir),
         chatId: cid
       }
     )

@@ -10,7 +10,7 @@ import { getActiveProject } from '../project/registry'
 import { getGraph, transitionNode, patchNode } from '../graph/store'
 import { emitOccEvent } from '../graph/events'
 import { GraphError } from '../graph/stateMachine'
-import { listAgentProviders, resolveAgentModel, type AgentProviderConfig } from './providers'
+import { listAgentProviders, resolveAgentModel, resolveAgentModelChain, type AgentProviderConfig } from './providers'
 import { buildTools, systemPrompt, type Tool } from './tools'
 import { jevEnabled, jevToolSafe } from './jev'
 import { runAgentLoop, type AgentMessage } from './loop'
@@ -144,9 +144,19 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
   session.busy = true
   await transitionNode(rootDir, session.nodeId, 'running').catch(() => undefined)
   try {
-    const result = await runAgentLoop({
-      provider: session.provider,
-      model: session.model,
+    // provider chain: quota exhaustion or provider breakage fails over to the
+    // next usable model instead of failing the worker. A failed attempt leaves
+    // session.messages untouched, so the retry replays the same task fresh.
+    const chain = resolveAgentModelChain(session.providerRef)
+    let result: Awaited<ReturnType<typeof runAgentLoop>> | null = null
+    let usedRef = session.providerRef
+    let lastErr: unknown
+    for (const resolved of chain) {
+      const ref = `${resolved.provider.id}/${resolved.model}`
+      try {
+        result = await runAgentLoop({
+          provider: resolved.provider,
+          model: resolved.model,
       messages: session.messages,
       tools: {
         defs: session.tools.map((t) => t.def),
@@ -223,7 +233,19 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
         },
         shouldAbort: () => session.aborted
       }
-    })
+        })
+        usedRef = ref
+        break
+      } catch (e) {
+        lastErr = e
+        if (session.aborted) throw e
+        if (chain.length > 1) {
+          chat('worker', `⚠ ${ref} 不可用（${String(e).slice(0, 80)}）— failover 到链上下一个模型`, session.nodeId, session.chatId)
+        }
+      }
+    }
+    if (!result) throw lastErr ?? new Error('provider chain exhausted (no usable model)')
+    session.providerRef = usedRef
     session.messages = result.messages
     await persist(session)
 

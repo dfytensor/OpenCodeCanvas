@@ -1,5 +1,8 @@
 // Project open/bootstrap flow: project record + graph binding + mainline root node.
 import type { GraphDoc, Project, SessionNode } from '../../shared/types'
+import { existsSync } from 'fs'
+import { mkdir, writeFile } from 'fs/promises'
+import { join } from 'path'
 import { openProject, saveProject } from './registry'
 import { getGraph, newSessionNode, patchNode, saveGraph, upsertNode } from '../graph/store'
 import { hashDirFast } from '../workspace/hash'
@@ -12,6 +15,26 @@ export async function openProjectWithGraph(
   if (!graph.projectId) {
     graph.projectId = project.id
     await saveGraph(rootDir, graph)
+  }
+  // seed the project-memory file once — every worker/verifier reads it
+  try {
+    const ctxFile = join(rootDir, '.occ', 'CONTEXT.md')
+    if (!existsSync(ctxFile)) {
+      await mkdir(join(rootDir, '.occ'), { recursive: true })
+      await writeFile(
+        ctxFile,
+        [
+          '# 项目上下文（agent 每次开工前都会读这里）',
+          '',
+          '<!-- 在下面写下：技术栈、目录结构、代码约定、禁区（不要动的文件/接口）、',
+          '     构建/测试命令。删掉本注释，用要点填写。 -->',
+          ''
+        ].join('\n'),
+        'utf8'
+      )
+    }
+  } catch {
+    // best-effort — a read-only project root must not block opening
   }
   return { project, graph }
 }

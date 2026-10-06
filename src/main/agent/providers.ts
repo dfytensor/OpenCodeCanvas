@@ -108,7 +108,11 @@ export function agentDefaultModelRef(): string {
 export function usableModelRefs(): UsableModel[] {
   const out: UsableModel[] = []
   for (const p of listAgentProviders(true)) {
-    for (const m of p.models.length ? p.models : ['default']) {
+    // a config entry without an explicit models list must fall back to the
+    // builtin catalog — 'deepseek/default' is not a real API model name
+    const builtinModels = BUILTIN[p.id]?.models ?? []
+    const models = p.models.length ? p.models : builtinModels.length ? builtinModels : ['default']
+    for (const m of models) {
       out.push({ ref: `${p.id}/${m}`, providerId: p.id, model: m, baseURL: p.baseURL, apiKey: p.apiKey })
     }
   }
@@ -131,4 +135,18 @@ export function resolveAgentModel(
   if (!provider) return null
   const model = mid || provider.models[0] || 'default'
   return { provider, model }
+}
+
+/** Preferred model first, then every other usable model interleaved across
+ *  providers. Call sites walk this chain when the provider rate-limits (429)
+ *  or errors — one exhausted quota must never take the whole pipeline down. */
+export function resolveAgentModelChain(
+  ref: string | undefined
+): Array<{ provider: AgentProviderConfig; model: string }> {
+  const first = resolveAgentModel(ref)
+  const firstRef = first ? `${first.provider.id}/${first.model}` : ''
+  const rest = usableModelRefs()
+    .filter((u) => u.ref !== firstRef)
+    .map((u) => ({ provider: { id: u.providerId, name: u.providerId, baseURL: u.baseURL, apiKey: u.apiKey } as AgentProviderConfig, model: u.model }))
+  return first ? [first, ...rest] : rest
 }
