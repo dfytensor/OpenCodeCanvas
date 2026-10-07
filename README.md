@@ -81,6 +81,17 @@ L2.5 策略进化 self-policy.json 自写自用（vN 自审计）
 
 > ours 在轻任务上不占优（管线开销），价值在多轮长链任务（激活前沿不重做）和经验积累（失败策略自动降级）。
 
+### HumanEval（执行判分，canonical tests）
+
+deepseek-chat，30 题随机抽样（seed=42，`bench/humaneval.ts`，可复现）：
+
+| 配置 | 通过率 | 平均耗时 |
+|---|---|---|
+| baseline 单发补全 | 29/30 (97%) | ~1s |
+| ours 完整管线 | 29/30 (97%) | ~35s |
+
+> 单函数任务上管线与裸模型打平（97%），但贵 35 倍——管线价值不在 HumanEval 这类任务上。真正的差异要在 SWE-bench 类多步任务上测量（需 Docker 环境，待测）。管线首轮通过率存在方差（80%~97%），重跑收敛到持平。
+
 ## Jev/AnyJev 集成
 
 - **Round-0 规划**：Jev Choice（ANSWER/BUILD + 并行判定）→ GLM 兜底
