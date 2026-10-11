@@ -1127,6 +1127,21 @@ async function runAdaptive(
   if (historyHint) chat('manager', `📜 载入 ${historyRecords.length} 条历史路由经验`, undefined, cid)
   tasks = experienceAdjust(rootDir, cid, tasks, opts.goal)
 
+  // ── pre-planner fast path: obvious new-file creation skips the planner
+  // entirely — ONE model call total, the same as a raw baseline call, so the
+  // light-task tier costs baseline parity while still getting syntax gates,
+  // artifact closure and provider failover. Any failure falls through to the
+  // planner + full pipeline below.
+  let fastTried = false
+  const tryFast = async (taskList: string[]): Promise<boolean> => {
+    if (fastTried) return false
+    fastTried = true
+    return tryFastPath(rootDir, opts.goal, taskList, cid)
+  }
+  if (await tryFast([opts.goal])) {
+    return
+  }
+
   // ── round-0 planner: Jev cascade (70-500ms, ~$0.0001) → GLM planner fallback ──
   try {
     let planned = false
@@ -1183,12 +1198,9 @@ async function runAdaptive(
     chat('manager', `planner unavailable (${String(e).slice(0, 80)}) — defaulting to direct build`, undefined, cid)
   }
 
-  // ── fast path: pure new-file creation at single-completion cost ──
-  // Light tasks used to pay full pipeline ceremony (~35× a raw call) for NO
-  // accuracy gain (HumanEval: 97% vs 97%). When every target is a NEW file,
-  // one completion + syntax gates does the job; any gate failure escalates
-  // to the full agent pipeline below.
-  if (await tryFastPath(rootDir, opts.goal, tasks, cid)) {
+  // ── fast path retry with planner-refined tasks (only if the pre-planner
+  // attempt never ran — e.g. the goal looked heavy until the plan clarified it)
+  if (await tryFast(tasks)) {
     return
   }
 
