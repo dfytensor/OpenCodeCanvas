@@ -79,9 +79,10 @@ async function chatCompletion(
   model: string,
   messages: AgentMessage[],
   tools: ToolDefLike[],
-  signal: AbortSignal
+  signal: AbortSignal,
+  onDelta?: (full: string) => void
 ): Promise<ChatResponse> {
-  trace(`chatCompletion enter url=${completionsUrl(provider.baseURL)} msgs=${messages.length} tools=${tools.length} http=${process.env.OCC_HTTP ?? 'http'}`)
+  trace(`chatCompletion enter url=${completionsUrl(provider.baseURL)} msgs=${messages.length} tools=${tools.length} http=${process.env.OCC_HTTP ?? 'http'}${onDelta ? ' stream' : ''}`)
   // retry with exponential backoff — transient failures (429/5xx/network)
   // are common with provider APIs, especially under rate limiting
   const MAX_ATTEMPTS = 4
@@ -98,6 +99,20 @@ async function chatCompletion(
         const r = await curlCompletion(provider, model, messages, tools)
         trace('curl transport done')
         return r
+      }
+      if (onDelta) {
+        try {
+          return await httpStreamCompletion(provider, model, messages, tools, signal, onDelta)
+        } catch (e) {
+          // some providers reject stream requests — one non-stream retry
+          const msg = String(e)
+          if (signal.aborted) throw e
+          if (/HTTP 4\d\d/.test(msg) && !/HTTP 429/.test(msg)) {
+            trace(`stream rejected (${msg.slice(0, 60)}) — non-stream retry`)
+            return await httpCompletion(provider, model, messages, tools, signal)
+          }
+          throw e
+        }
       }
       return await httpCompletion(provider, model, messages, tools, signal)
     } catch (e) {
@@ -189,6 +204,129 @@ function httpCompletion(
     req.end()
   })
 }
+/** Streaming variant of httpCompletion — SSE deltas feed onDelta (throttled),
+ *  the assembled full response resolves at [DONE]. Falls back at the caller
+ *  when a provider rejects streaming. */
+function httpStreamCompletion(
+  provider: AgentProviderConfig,
+  model: string,
+  messages: AgentMessage[],
+  tools: ToolDefLike[],
+  signal: AbortSignal,
+  onDelta: (full: string) => void
+): Promise<ChatResponse> {
+  return new Promise<ChatResponse>((resolve, reject) => {
+    const url = new URL(completionsUrl(provider.baseURL))
+    const body = JSON.stringify({
+      model,
+      messages,
+      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      stream: true,
+      stream_options: { include_usage: true }
+    })
+    const isHttps = url.protocol === 'https:'
+    const mod = isHttps ? require('https') : require('http')
+    let settled = false
+    let timer: NodeJS.Timeout | undefined
+    let acc = ''
+    let lastEmit = 0
+    // eslint-disable-next-line prefer-const
+    let req: import('http').ClientRequest
+    let toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = []
+    let usage: ChatResponse['usage'] | undefined
+
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      fn()
+    }
+    const onAbort = (): void => {
+      req.destroy()
+      finish(() => reject(new Error('request aborted')))
+    }
+
+    req = mod.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {})
+        }
+      },
+      (res: import('http').IncomingMessage) => {
+        if (!res.statusCode || res.statusCode >= 400) {
+          let errBody = ''
+          res.on('data', (c: Buffer) => { errBody += c })
+          res.on('end', () => finish(() => reject(new Error(`provider HTTP ${res.statusCode}: ${errBody.slice(0, 180)}`))))
+          return
+        }
+        let buf = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk: string) => {
+          buf += chunk
+          let idx: number
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).replace(/\r$/, '')
+            buf = buf.slice(idx + 1)
+            if (!line.startsWith('data:')) continue
+            const payload = line.slice(5).trim()
+            if (!payload || payload === '[DONE]') continue
+            try {
+              const j = JSON.parse(payload)
+              const delta = j.choices?.[0]?.delta ?? {}
+              if (typeof delta.content === 'string' && delta.content) {
+                acc += delta.content
+                const now = Date.now()
+                if (now - lastEmit > 120) {
+                  lastEmit = now
+                  onDelta(acc)
+                }
+              }
+              for (const tc of delta.tool_calls ?? []) {
+                const i = tc.index ?? 0
+                toolCalls[i] = toolCalls[i] ?? { id: tc.id ?? '', type: 'function', function: { name: '', arguments: '' } }
+                if (tc.id) toolCalls[i].id = tc.id
+                if (tc.function?.name) toolCalls[i].function.name += tc.function.name
+                if (tc.function?.arguments) toolCalls[i].function.arguments += tc.function.arguments
+              }
+              if (j.usage) usage = j.usage
+            } catch { /* partial line — next chunk completes it */ }
+          }
+        })
+        res.on('end', () => {
+          onDelta(acc) // final flush
+          const message = {
+            role: 'assistant' as const,
+            content: acc,
+            ...(toolCalls.filter(Boolean).length > 0 ? { tool_calls: toolCalls.filter(Boolean) } : {})
+          }
+          finish(() => resolve({ choices: [{ message }], usage }))
+        })
+        res.on('error', (e: Error) => finish(() => reject(e)))
+      }
+    )
+    if (signal.aborted) {
+      finish(() => reject(new Error('request aborted')))
+      req.destroy()
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    req.on('error', (e: Error) => finish(() => reject(e)))
+    timer = setTimeout(() => {
+      req.destroy()
+      finish(() => reject(new Error('provider stream timeout (180s)')))
+    }, 180_000)
+    req.write(body)
+    req.end()
+  })
+}
+
 interface ToolDefLike {
   type: 'function'
   function: { name: string; description: string; parameters: Record<string, unknown> }
@@ -317,6 +455,8 @@ export async function runAgentLoop(opts: {
   maxSteps?: number
   callbacks: LoopCallbacks
   signal?: AbortSignal
+  /** live partial text as the model generates — drives the streaming UI */
+  onStream?: (partial: string) => void
 }): Promise<LoopResult> {
   const messages = [...opts.messages]
   const maxSteps = opts.maxSteps ?? 24
@@ -337,7 +477,14 @@ export async function runAgentLoop(opts: {
 
     let res: ChatResponse
     try {
-      res = await chatCompletion(opts.provider, opts.model, messages, opts.tools.defs, opts.signal ?? new AbortController().signal)
+      res = await chatCompletion(
+        opts.provider,
+        opts.model,
+        messages,
+        opts.tools.defs,
+        opts.signal ?? new AbortController().signal,
+        opts.onStream
+      )
     } catch (e) {
       opts.callbacks.onEvent({ type: 'error', text: String(e) })
       throw e

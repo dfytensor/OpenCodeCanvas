@@ -63,6 +63,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const loadChatLog = useOccStore((s) => s.loadChatLog)
   const abort = useOccStore((s) => s.abort)
   const graph = useOccStore((s) => s.graph)
+  const streams = useOccStore((s) => s.streams)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   // only truly-working states block typing; awaiting_input MUST stay answerable
@@ -214,6 +215,23 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
             </div>
           </div>
         ))}
+        {/* live streaming bubbles — the model's partial output, growing */}
+        {Object.entries(streams ?? {})
+          .filter(([, v]) => v.chatId === id && v.text)
+          .map(([nid, v]) => (
+            <div key={nid} className="flex flex-col">
+              <div className="max-w-[95%] rounded-lg border border-canvas-border bg-canvas-node/60 px-2.5 py-1.5 text-gray-400">
+                <div className="mb-0.5 flex items-center gap-1.5">
+                  <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">agent · {graph?.nodes[nid]?.title ?? nid}</span>
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
+                </div>
+                <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">
+                  {v.text.slice(-500)}
+                  <span className="animate-pulse text-canvas-accent">▍</span>
+                </p>
+              </div>
+            </div>
+          ))}
         {/* typing indicator */}
         {showTyping && (
           <div className="flex items-center gap-1.5 px-2 py-1">

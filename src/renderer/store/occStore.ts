@@ -43,6 +43,8 @@ interface OccState {
   models: OcModelCatalog | null
   eventLog: OccLogEntry[]
   chats: Record<NodeID, ChatEntry[]>
+  /** live streaming partials keyed by worker nodeId (renderer-only, not persisted) */
+  streams: Record<NodeID, { chatId?: NodeID; text: string }>
   wizardOpen: boolean
   inspectCache: Record<NodeID, ContentManifest>
   /** one-shot signal: GraphCanvas pans to this node then clears it */
@@ -103,6 +105,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
   models: null,
   eventLog: [],
   chats: {},
+  streams: {},
   wizardOpen: false,
   inspectCache: {},
   focusNode: null,
@@ -361,7 +364,16 @@ export const useOccStore = create<OccState>()((set, get) => ({
   setWizard: (open) => set({ wizardOpen: open }),
 
   subscribe: () => {
-    return window.electronAPI.occ.onEvent((event) => {      if (event.type === 'pipeline.chat') {
+    return window.electronAPI.occ.onEvent((event) => {      if (event.type === 'pipeline.stream') {
+        set((s) => {
+          const streams = { ...s.streams }
+          if (event.done || !event.text) delete streams[event.nodeId]
+          else streams[event.nodeId] = { chatId: event.chatId, text: event.text }
+          return { streams }
+        })
+        return
+      }
+      if (event.type === 'pipeline.chat') {
         if (event.chatId) {
           set((s) => ({
             chats: {

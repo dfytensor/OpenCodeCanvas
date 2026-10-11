@@ -142,6 +142,9 @@ async function persist(session: AgentSession): Promise<void> {
 
 async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
   session.busy = true
+  const emitStream = (text: string, done = false): void => {
+    emitOccEvent({ type: 'pipeline.stream', nodeId: session.nodeId, chatId: session.chatId, text, done })
+  }
   await transitionNode(rootDir, session.nodeId, 'running').catch(() => undefined)
   try {
     // provider chain: quota exhaustion or provider breakage fails over to the
@@ -207,6 +210,7 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
       },
       maxSteps: getActiveProject()?.policy.maxStepsPerNode ?? 32,
       signal: session.ctrl.signal,
+      onStream: (partial) => emitStream(partial),
       callbacks: {
         onUsage: (u) => {
           // meter per-step so costs are visible even if the turn times out
@@ -224,10 +228,13 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
         },
         onEvent: (e) => {
           if (e.type === 'text' && e.text) {
+            emitStream('', true) // step finished — clear the live bubble
             chat('worker', `▪ ${session.title}: ${e.text.slice(0, 600)}`, session.nodeId, session.chatId)
           } else if (e.type === 'tool') {
+            emitStream('', true)
             chat('worker', `⚙ ${session.title} → ${e.tool}()`, session.nodeId, session.chatId)
           } else if (e.type === 'error') {
+            emitStream('', true)
             chat('worker', `✗ ${session.title}: ${e.text?.slice(0, 300)}`, session.nodeId, session.chatId)
           }
         },
@@ -273,6 +280,7 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
     chat('worker', `${session.aborted ? '■' : '✗'} ${session.title} ${session.aborted ? 'aborted' : 'failed'}: ${String(e).slice(0, 300)}`, session.nodeId, session.chatId)
   } finally {
     session.busy = false
+    emitStream('', true)
   }
 }
 

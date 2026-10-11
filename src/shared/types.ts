@@ -308,6 +308,7 @@ export type OccEvent =
   | { type: 'node.output'; nodeId: NodeID; chunk: string }
   | { type: 'server.status'; status: 'starting' | 'ready' | 'down' }
   | { type: 'pipeline.chat'; role: 'manager' | 'worker' | 'final'; text: string; nodeId?: NodeID; chatId?: NodeID }
+  | { type: 'pipeline.stream'; nodeId: NodeID; chatId?: NodeID; text: string; done?: boolean }
 
 // ───────────────────────── Inherit execution result ─────────────────────────
 

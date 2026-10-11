@@ -8,6 +8,7 @@ import { setActiveProject, updatePolicy } from 'F:/OpenCodeCanvas/src/main/proje
 import { ensureObserver } from 'F:/OpenCodeCanvas/src/main/inherit/executor'
 import { createChat, chatSend, chatLog } from 'F:/OpenCodeCanvas/src/main/chat'
 import { getGraph } from 'F:/OpenCodeCanvas/src/main/graph/store'
+import { onOccEvent } from 'F:/OpenCodeCanvas/src/main/graph/events'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 let fail = 0
@@ -63,9 +64,20 @@ async function main() {
 
   const chatId = (await createChat(projDir)) as string
   console.log(`[batch ${which}] goal lines: ${goals.length}`)
+  // streaming telemetry: count live partial events during the pipeline
+  let streamEvents = 0
+  let streamMax = 0
+  const unsubStream = onOccEvent((e) => {
+    if (e.type === 'pipeline.stream' && !e.done && e.text) {
+      streamEvents++
+      streamMax = Math.max(streamMax, e.text.length)
+    }
+  })
   await chatSend(projDir, chatId, goals.join('\n') + '\n全部创建后逐一读回验证，然后报告任务完成。')
 
   const t = await waitFinal(projDir, chatId, 0, 7 * 60_000)
+  unsubStream()
+  console.log(`    [stream] events=${streamEvents} maxLen=${streamMax}`)
   check('final arrived', t.length > 0, '(timeout 7min)')
   console.log('    final:', t.slice(0, 110).replace(/\n/g, ' | '))
 

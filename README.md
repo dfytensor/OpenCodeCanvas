@@ -94,6 +94,13 @@ deepseek-chat，60 题随机抽样（seed=42，`bench/humaneval.ts`，可复现�
 
 > **轻任务负收益区已收复**：单次生成 + 语法门 + 产物闭环，成本 ~2× 达到与裸模型持平的正确率，且自带 baseline 没有的东西——语法门、产物闭环、provider failover、项目记忆。任何门失败自动升级完整管线。重任务（多步/改真实仓库）走隔离工作区 + 验收员管线：涌现探针实测 68s/35k tokens vs baseline 121s/50k tokens——**又快又省**。
 
+## 体验
+
+- **流式输出**：worker 生成时聊天节点内实时长出文字（SSE → 事件总线 → 生长气泡，120ms 节流；工具调用从 delta 装配，实测 3 并行 worker fitness=1）
+- **画布可视化**：聊天为根、agent 图向右生长、LOD 分层、MiniMap、64 聊天无重叠级联
+- **等待可见**：权限/预算门 → 任务栏闪烁 + toast + 「N 等待回复」徽章一键定位
+- **一键应答**：允许/全部允许/拒绝、继续/取消；停止 → 中止整棵子树；失败 → 重试/忽略
+
 ## 上下文治理
 
 见 [docs/context-governance.md](docs/context-governance.md)。核心：世界状态落盘、上下文持引用、工具结果当轮内联跨轮压实（`compactHistory`，实测多轮长任务 25 次压实零 API 错误）、思考不跨轮而结论压缩跨轮。
