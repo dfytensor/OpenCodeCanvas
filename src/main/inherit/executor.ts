@@ -1,7 +1,7 @@
 // §8 inherit-node executor: validate -?resolve -?compose -?provision -?// materialize -?bind -?dispatch -?observe. Also hosts the node actions
 // (freeze/archive/send/abort/apply) and the SSE + polling status observer.
 import { existsSync, readFileSync } from 'fs'
-import { basename, join } from 'path'
+import { basename, dirname, extname, join } from 'path'
 import { nanoid } from '../ids'
 import type {
   ContentManifest,
@@ -592,8 +592,7 @@ const EVALUATOR_FORMAT =
 
 /** Project memory: .occ/CONTEXT.md is the user-curated ground truth (stack,
  *  conventions, landmines). Injected into every worker and verifier so the
- *  first attempt already knows the project — fewer rounds, fewer tokens. */
-async function projectContextHint(rootDir: string): Promise<string> {
+ *  first attempt already knows the project — fewer rounds, fewer tokens. */async function projectContextHint(rootDir: string): Promise<string> {
   try {
     const { readFile } = await import('fs/promises')
     const raw = await readFile(join(rootDir, '.occ', 'CONTEXT.md'), 'utf8')
@@ -632,9 +631,164 @@ async function projectContextHint(rootDir: string): Promise<string> {
   }
 }
 
+// ── light-task fast path: new-file creation at single-completion cost ──
+// The HumanEval measurement showed the full pipeline costs ~35× a raw call for
+// ZERO accuracy gain on single-function tasks. When the goal only creates NEW
+// files, one completion + programmatic syntax gates does the job; any gate
+// failure escalates to the full agent pipeline. Raw-model parity, pipeline safety.
+
+// CJK-only intent verbs: the goal often embeds English problem statements
+// (e.g. pasted issue text), where words like "search"/"test" would wrongly
+// disqualify genuinely light creation tasks
+const FAST_INSPECT_VERB = /(阅读|分析|查找|解释|理解|排查|调试|重构|修复|修改|运行|测试)/i
+
+/** Cheap executable syntax gates — the fast path's substitute for the verifier. */
+async function fastSyntaxGate(file: string): Promise<boolean> {
+  const ext = extname(file).toLowerCase()
+  try {
+    if (ext === '.py') {
+      const { execFile } = await import('child_process')
+      const { promisify } = await import('util')
+      await promisify(execFile)('python', ['-c', 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())', file], { timeout: 10_000, windowsHide: true })
+      return true
+    }
+    if (ext === '.json') {
+      JSON.parse(readFileSync(file, 'utf8'))
+      return true
+    }
+    if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
+      const { execFile } = await import('child_process')
+      const { promisify } = await import('util')
+      await promisify(execFile)(process.execPath, ['--check', file], { timeout: 10_000, windowsHide: true })
+      return true
+    }
+    return true // no executable gate for this type — existence + closure suffice
+  } catch {
+    return false
+  }
+}
+
+/** files the fast path wrote per chat — overwriting OUR OWN fast-path output
+ *  is fine (multi-round light tasks); overwriting user files is not */
+const fastPathWritten = new Map<NodeID, Set<string>>()
+
+/** Returns true when the fast path handled the whole pipeline (final posted). */
+async function tryFastPath(
+  rootDir: string,
+  goal: string,
+  tasks: string[],
+  cid: NodeID | undefined
+): Promise<boolean> {
+  const t0 = Date.now()
+  if (process.env.OCC_DEBUG) console.error('[fast] enter tasks=', JSON.stringify(tasks).slice(0, 120))
+  try {
+    if (!cid) { if (process.env.OCC_DEBUG) console.error('[fast] no cid'); return false }
+    if (tasks.length === 0 || tasks.length > 2) { if (process.env.OCC_DEBUG) console.error('[fast] tasks.length=', tasks.length); return false }
+    if (FAST_INSPECT_VERB.test(goal)) { if (process.env.OCC_DEBUG) console.error('[fast] inspect verb matched'); return false }
+    const targets = new Set<string>()
+    // extract from tasks AND the goal: the planner often paraphrases tasks in
+    // its own words (sometimes dropping the filename) while the goal keeps it
+    for (const t of [...tasks, goal]) {
+      for (const f of extractTargetFiles(t)) targets.add(f)
+    }
+    if (targets.size === 0 || targets.size > 4) { if (process.env.OCC_DEBUG) console.error('[fast] targets=', [...targets]); return false }
+    for (const f of targets) {
+      if (existsSync(join(rootDir, f)) && !fastPathWritten.get(cid)?.has(f)) {
+        if (process.env.OCC_DEBUG) console.error('[fast] target exists:', f)
+        return false // only NEW files (or files this chat's fast path wrote)
+      }
+    }
+    const project = getActiveProject()
+    const chain = resolveAgentModelChain(project?.policy.defaultModel)
+    if (process.env.OCC_DEBUG) console.error('[fast] chain=', chain.length)
+    if (chain.length === 0) return false
+
+    chat('manager', `⚡ 轻任务快路径：${targets.size} 个新文件 — 单次生成 + 语法门`, undefined, cid)
+    const fileList = [...targets].join(', ')
+    let reply = ''
+    for (const resolved of chain) {
+      try {
+        reply = await completeChat({
+          provider: resolved.provider,
+          model: resolved.model,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You write files for a coding task. Output EVERY target file in EXACTLY this format and nothing else:\nFILE: <relative/path>\n```<lang>\n<complete file content>\n```'
+            },
+            { role: 'user', content: `目标：${goal}\n\n必须产出的文件：${fileList}` }
+          ]
+        })
+        break
+      } catch (e) {
+        if (chain.length > 1) {
+          chat('manager', `⚠ ${resolved.provider.id}/${resolved.model} 不可用（${String(e).slice(0, 60)}）— 尝试下一个模型`, undefined, cid)
+        }
+        reply = ''
+      }
+    }
+    if (!reply.trim()) return false
+
+    const files = new Map<string, string>()
+    for (const m of reply.matchAll(/FILE:\s*(\S[^\n]*)\n+```[\w-]*\n([\s\S]*?)```/g)) {
+      files.set(m[1].trim().replace(/^[./\\]+/, ''), m[2])
+    }
+    if (files.size === 0 && targets.size === 1) {
+      const only = [...targets][0]
+      const fence = /```[\w-]*\n([\s\S]*?)```/.exec(reply)
+      files.set(only, (fence ? fence[1] : reply).trim())
+    }
+    if (files.size === 0) {
+      chat('manager', '⚡ 快路径无法解析输出 — 升级完整 agent 管线', undefined, cid)
+      return false
+    }
+
+    const { mkdir, writeFile } = await import('fs/promises')
+    for (const [rel, content] of files) {
+      const dest = join(rootDir, rel)
+      await mkdir(dirname(dest), { recursive: true })
+      await writeFile(dest, content, 'utf8')
+      const mine = fastPathWritten.get(cid) ?? new Set<string>()
+      mine.add(rel)
+      fastPathWritten.set(cid, mine)
+    }
+    for (const [rel] of files) {
+      if (!(await fastSyntaxGate(join(rootDir, rel)))) {
+        chat('manager', `⚡ ${rel} 语法门未通过 — 升级完整 agent 管线`, undefined, cid)
+        return false
+      }
+    }
+    const missing = missingArtifacts(rootDir, goal)
+    if (missing.length > 0) {
+      chat('manager', `⚡ 缺产物 ${missing.join(', ')} — 升级完整 agent 管线`, undefined, cid)
+      return false
+    }
+
+    const wallSec = Math.round((Date.now() - t0) / 1000)
+    const tokens = estimateTokens(reply) + estimateTokens(goal)
+    chat('manager', `⚡ 快路径完成：${[...files.keys()].join(', ')}（语法门通过）`, undefined, cid)
+    chat('final', `已生成 ${files.size} 个文件（${[...files.keys()].join(', ')}），语法校验通过。`, undefined, cid)
+    saveRoutingOutcome(rootDir, {
+      chatId: cid,
+      shape: shapeKey(goal),
+      tasks: tasks.length,
+      rounds: 0,
+      outcome: 'success',
+      tokens,
+      wallSec,
+      fastPath: true
+    })
+    return true
+  } catch (e) {
+    if (process.env.OCC_DEBUG) console.error('[fast] EX', String(e).slice(0, 140))
+    return false // any surprise → full pipeline
+  }
+}
+
 // ── artifact closure: files the goal names as creation targets must exist in root ──
 
-const CREATION_VERB = /(创建|新建|写入|生成|添加|保存|create|write|add|generate|save)/i
+const CREATION_VERB = /(创建|新建|写入|生成|添加|保存|实现|编写|create|write|add|generate|save|implement)/i
 const FILE_TOKEN = /[A-Za-z0-9_\-\u4e00-\u9fa5]+\.(json|js|ts|tsx|jsx|mjs|cjs|css|html|htm|md|txt|csv|ya?ml|py|sh|ps1)/gi
 
 function extractTargetFiles(goal: string): string[] {
@@ -802,6 +956,8 @@ interface RoutingRecord {
   verifyCaught?: boolean
   verifySkipped?: boolean
   jevAccepted?: boolean
+  /** completed by the light-task fast path (no worker nodes) */
+  fastPath?: boolean
 }
 
 function routingFile(rootDir: string): string {
@@ -1025,6 +1181,15 @@ async function runAdaptive(
     )
   } catch (e) {
     chat('manager', `planner unavailable (${String(e).slice(0, 80)}) — defaulting to direct build`, undefined, cid)
+  }
+
+  // ── fast path: pure new-file creation at single-completion cost ──
+  // Light tasks used to pay full pipeline ceremony (~35× a raw call) for NO
+  // accuracy gain (HumanEval: 97% vs 97%). When every target is a NEW file,
+  // one completion + syntax gates does the job; any gate failure escalates
+  // to the full agent pipeline below.
+  if (await tryFastPath(rootDir, opts.goal, tasks, cid)) {
+    return
   }
 
   let spent = 0

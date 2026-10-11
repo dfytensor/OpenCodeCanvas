@@ -106,31 +106,37 @@ async function runBaseline(p: HEProblem): Promise<{ pass: boolean; err: string }
   return scoreCompletion(p, extractCode(reply, p.entry_point))
 }
 
-async function runOurs(p: HEProblem, work: string): Promise<{ pass: boolean; err: string }> {
-  const projDir = join(work, 'app')
-  mkdirSync(projDir, { recursive: true })
-  writeFileSync(join(projDir, 'README.md'), '# he\n')
-  await openProjectWithGraph(projDir)
-  const proj = await updatePolicy(projDir, { engine: 'native', toolPermission: 'auto', defaultModel: APP })
-  setActiveProject(proj)
-  const chatId = (await createChat(projDir)) as string
-  const goal =
-    `在 solution.py 中实现以下 Python 函数（完整 def 行 + 函数体，可加必要 import）：\n\n${p.prompt}\n\n` +
-    `要求：写好后用 python 读回/执行验证函数行为，然后报告完成。`
-  await chatSend(projDir, chatId, goal)
-  const deadline = Date.now() + 4 * 60_000
-  let final = ''
-  while (Date.now() < deadline) {
-    const log = await chatLog(projDir, chatId)
-    const finals = log.filter((e) => e.role === 'final')
-    if (finals.length > 0) { final = finals[finals.length - 1].text; break }
-    await sleep(2000)
+async function runOurs(p: HEProblem): Promise<{ pass: boolean; err: string }> {
+  // fresh project per task — HumanEval tasks must not see each other's files
+  const work = mkdtempSync(join(tmpdir(), 'occ-he-'))
+  try {
+    const projDir = join(work, 'app')
+    mkdirSync(projDir, { recursive: true })
+    writeFileSync(join(projDir, 'README.md'), '# he\n')
+    await openProjectWithGraph(projDir)
+    const proj = await updatePolicy(projDir, { engine: 'native', toolPermission: 'auto', defaultModel: APP })
+    setActiveProject(proj)
+    const chatId = (await createChat(projDir)) as string
+    const goal =
+      `在 solution.py 中实现以下 Python 函数（完整 def 行 + 函数体，可加必要 import）：\n\n${p.prompt}\n\n` +
+      `要求：写好后用 python 读回/执行验证函数行为，然后报告完成。`
+    await chatSend(projDir, chatId, goal)
+    const deadline = Date.now() + 4 * 60_000
+    let final = ''
+    while (Date.now() < deadline) {
+      const log = await chatLog(projDir, chatId)
+      const finals = log.filter((e) => e.role === 'final')
+      if (finals.length > 0) { final = finals[finals.length - 1].text; break }
+      await sleep(2000)
+    }
+    const solPath = join(projDir, 'solution.py')
+    if (!existsSync(solPath)) return { pass: false, err: 'no solution.py (final=' + final.slice(0, 60) + ')' }
+    const code = readFileSync(solPath, 'utf8')
+    if (!new RegExp(`def\\s+${p.entry_point}\\b`).test(code)) return { pass: false, err: 'entry point missing in solution.py' }
+    return scoreCompletion(p, code)
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }) } catch { /* temp */ }
   }
-  const solPath = join(projDir, 'solution.py')
-  if (!existsSync(solPath)) return { pass: false, err: 'no solution.py (final=' + final.slice(0, 60) + ')' }
-  const code = readFileSync(solPath, 'utf8')
-  if (!new RegExp(`def\\s+${p.entry_point}\\b`).test(code)) return { pass: false, err: 'entry point missing in solution.py' }
-  return scoreCompletion(p, code)
 }
 
 async function main(): Promise<void> {
@@ -157,7 +163,7 @@ async function main(): Promise<void> {
       const t0 = Date.now()
       let out: { pass: boolean; err: string }
       try {
-        out = cfg === 'baseline' ? await runBaseline(p) : await runOurs(p, work)
+        out = cfg === 'baseline' ? await runBaseline(p) : await runOurs(p)
       } catch (e) {
         out = { pass: false, err: String(e).slice(0, 200) }
       }
