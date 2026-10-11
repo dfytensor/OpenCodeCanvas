@@ -1,6 +1,8 @@
 // Jev/AnyJev adapter — typed decisions with calibrated confidence.
-// Uses OpenRouter Decisions API (typesafe/jev-1.13) when OPENROUTER_API_KEY
-// is available; falls back to GLM when not.
+// Backend cascade: OpenRouter Decisions API (typesafe/jev-1.13, best quality)
+// → LOCAL small model on any OpenAI-compatible endpoint (zero cost, offline,
+// privacy — set OCC_JEV_LOCAL / OCC_JEV_LOCAL_MODEL, auto-probes :11434)
+// → throw (callers fall back to GLM).
 //
 // The observe() pattern (AnyJev L0→L1→L2): every pipeline outcome feeds back
 // into calibration.jsonl. As entries accumulate, confidence thresholds become
@@ -35,12 +37,94 @@ export interface JevResult {
 const ENDPOINT = 'https://openrouter.ai/api/alpha/decisions'
 const MODEL = 'typesafe/jev-1.13'
 
+// ── local backend (small model, zero cost, offline) ──
+
+const LOCAL_BASE = (process.env.OCC_JEV_LOCAL ?? 'http://127.0.0.1:11434/v1').replace(/\/$/, '')
+const LOCAL_MODEL = process.env.OCC_JEV_LOCAL_MODEL ?? 'local'
+let localProbe: { at: number; ok: boolean } | null = null
+let localFails = 0
+
+async function refreshLocalProbe(): Promise<boolean> {
+  let ok = false
+  try {
+    const ctrl = new AbortController()
+    const kill = setTimeout(() => ctrl.abort(), 2000)
+    const r = await fetch(`${LOCAL_BASE}/models`, { signal: ctrl.signal })
+    clearTimeout(kill)
+    ok = r.ok
+  } catch {
+    ok = false
+  }
+  localProbe = { at: Date.now(), ok }
+  return ok
+}
+void refreshLocalProbe() // prime at module load — jevEnabled() is sync
+
+function localCached(): boolean {
+  return !!localProbe?.ok
+}
+
+async function localReady(): Promise<boolean> {
+  if (process.env.OCC_JEV_LOCAL === '0') return false
+  if (!localProbe || Date.now() - localProbe.at > 60_000) return refreshLocalProbe()
+  return localProbe.ok
+}
+
+/** one local decision: prompt for JSON, parse the first {...} block */
+async function localDecision<T>(system: string, user: string, fallback: T, cap?: number): Promise<{ parsed: T; latencyMs: number }> {
+  const t0 = Date.now()
+  const ctrl = new AbortController()
+  const kill = setTimeout(() => ctrl.abort(new Error('local jev timeout (20s)')), 20_000)
+  try {
+    const res = await fetch(`${LOCAL_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: LOCAL_MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ],
+        temperature: 0,
+        max_tokens: 700
+      }),
+      signal: ctrl.signal
+    })
+    clearTimeout(kill)
+    if (!res.ok) throw new Error(`local HTTP ${res.status}`)
+    const json: any = await res.json()
+    const text: string = (json.choices?.[0]?.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+    // small models sometimes wrap JSON in prose/fences — take the outermost braces
+    const s = text.indexOf('{')
+    const e = text.lastIndexOf('}')
+    if (s < 0 || e <= s) throw new Error(`local no JSON in reply: ${text.slice(0, 80)}`)
+    const parsed = { ...fallback, ...JSON.parse(text.slice(s, e + 1)) } as T
+    if (cap !== undefined) {
+      const rec = parsed as Record<string, unknown>
+      for (const k of Object.keys(rec)) {
+        if (/prob|confidence/i.test(k) && typeof rec[k] === 'number' && rec[k] > cap) rec[k] = cap
+      }
+    }
+    localFails = 0
+    return { parsed, latencyMs: Date.now() - t0 }
+  } catch (e) {
+    clearTimeout(kill)
+    // transient inference hiccups must not poison the 60s availability cache —
+    // only consecutive failures mark the endpoint down
+    localFails++
+    if (localFails >= 2) void refreshLocalProbe()
+    if (process.env.OCC_DEBUG) console.error('[jev-local]', String(e).slice(0, 140))
+    throw new Error(`local jev: ${String(e).slice(0, 120)}`)
+  }
+}
+
 export function jevKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY
 }
 
+/** sync gate for call sites — cloud key OR a cached-visible local endpoint */
 export function jevEnabled(): boolean {
-  return !!jevKey()
+  return !!jevKey() || localCached()
 }
 
 export async function jevAsk(
@@ -83,7 +167,24 @@ export async function jevRoute(goal: string): Promise<{
   parallel: boolean
   confidence: number
   latencyMs: number
+  backend?: 'openrouter' | 'local'
 }> {
+  if (await localReady()) {
+    try {
+      const { parsed, latencyMs } = await localDecision(
+        'You are a routing decision engine for a coding agent pipeline. Reply with ONLY a JSON object — no prose, no markdown.',
+        `规则：\n- mode="answer"：纯解释/观点题，不需要改动任何文件\n- mode="build"：要创建/修改文件，或在项目里运行东西\n- parallel=true 仅当目标含多个互不依赖的交付物\n\n示例：\nGoal: "解释一下什么是事件循环" → {"mode":"answer","parallel":false,"confidence":0.9}\nGoal: "在 src 创建 debounce.ts 实现防抖" → {"mode":"build","parallel":false,"confidence":0.9}\nGoal: "创建 a.txt 和 b.txt" → {"mode":"build","parallel":true,"confidence":0.8}\nGoal: "把 README.md 的安装步骤改成 pnpm" → {"mode":"build","parallel":false,"confidence":0.9}\n\nGoal: ${goal}\n\n只输出 JSON：`,
+        { mode: 'build', parallel: false, confidence: 0.5 }
+      )
+      return {
+        mode: parsed.mode === 'answer' ? 'answer' : 'build',
+        parallel: !!parsed.parallel,
+        confidence: Math.min(0.8, Number(parsed.confidence) || 0.6),
+        latencyMs,
+        backend: 'local'
+      }
+    } catch { /* local down — fall to OpenRouter */ }
+  }
   const r = await jevAsk(
     { goal },
     {
@@ -107,13 +208,25 @@ export async function jevRoute(goal: string): Promise<{
   )
   const mode = r.answers.route?.choice === 'answer' ? 'answer' : 'build'
   const parallel = (r.answers.parallel?.noul ?? 0) > 0.5
-  return { mode, parallel, confidence: r.answers.route?.confidence ?? 0, latencyMs: r.latencyMs }
+  return { mode, parallel, confidence: r.answers.route?.confidence ?? 0, latencyMs: r.latencyMs, backend: 'openrouter' }
 }
 
 export async function jevGoalMet(
   goal: string,
   workerReports: string
-): Promise<{ met: boolean; probability: number }> {
+): Promise<{ met: boolean; probability: number; backend?: 'openrouter' | 'local' }> {
+  if (await localReady()) {
+    try {
+      const { parsed, latencyMs } = await localDecision(
+        'You are an acceptance judge for a coding agent pipeline. Reply with ONLY a JSON object — no prose.',
+        `判断 worker 报告是否证明目标已完成。只输出 JSON。\n\n示例：\n报告："已创建 alpha.txt 并读回验证，内容字节级一致" → {"met": true, "probability": 0.9}\n报告："文件已创建（未验证内容）" → {"met": false, "probability": 0.3}\n报告："创建失败，权限被拒" → {"met": false, "probability": 0.05}\n\nGoal: ${goal}\n\nWorker 报告：${workerReports.slice(0, 4000)}\n\n只输出 JSON：`,
+        { met: false, probability: 0 },
+        0.85
+      )
+      const p = Math.min(0.85, Number(parsed.probability) || (parsed.met ? 0.7 : 0.1))
+      return { met: !!parsed.met && p >= 0.5, probability: p, backend: 'local' }
+    } catch (e) { if (process.env.OCC_DEBUG) console.error('[jev-local]', String(e).slice(0, 120)) }
+  }
   const r = await jevAsk(
     { goal, worker_reports: workerReports.slice(0, 4000) },
     {
@@ -127,10 +240,25 @@ export async function jevGoalMet(
       }
     }
   )
-  return { met: (r.answers.goal_met?.noul ?? 0) >= 0.5, probability: r.answers.goal_met?.noul ?? 0 }
+  return { met: (r.answers.goal_met?.noul ?? 0) >= 0.5, probability: r.answers.goal_met?.noul ?? 0, backend: 'openrouter' }
 }
 
-export async function jevToolSafe(tool: string, detail: string): Promise<{ safe: boolean; probability: number }> {
+export async function jevToolSafe(tool: string, detail: string): Promise<{ safe: boolean; probability: number; backend?: 'openrouter' | 'local' }> {
+  // policy: the LOCAL small model never auto-approves — its probability is
+  // capped below the 0.9 auto-approval bar, so the user always decides.
+  // A 2B model must not be a security authority.
+  if (await localReady()) {
+    try {
+      const { parsed, latencyMs } = await localDecision(
+        'You classify agent tool calls for safety. Reply with ONLY a JSON object — no prose.',
+        `判断 agent 工具调用是否安全。只输出 JSON。\n\n示例：\nbash "rm -rf /" → {"safe": false, "probability": 0.05}\nwrite_file "solution.py（项目工作区内）" → {"safe": true, "probability": 0.9}\nbash "git push origin main" → {"safe": false, "probability": 0.1}\nread_file "README.md" → {"safe": true, "probability": 0.95}\n\nTool: ${tool}\nDetail: ${detail.slice(0, 500)}\n\n只输出 JSON：`,
+        { safe: false, probability: 0 },
+        0.85
+      )
+      const p = Math.min(0.85, Number(parsed.probability) || (parsed.safe ? 0.7 : 0.1))
+      return { safe: !!parsed.safe && p >= 0.5, probability: p, backend: 'local' }
+    } catch (e) { if (process.env.OCC_DEBUG) console.error('[jev-local]', String(e).slice(0, 120)) }
+  }
   const r = await jevAsk(
     { tool, detail: detail.slice(0, 500) },
     {
@@ -145,7 +273,7 @@ export async function jevToolSafe(tool: string, detail: string): Promise<{ safe:
     }
   )
   const p = r.answers.safe?.noul ?? 0
-  return { safe: p >= 0.5, probability: p }
+  return { safe: p >= 0.5, probability: p, backend: 'openrouter' }
 }
 
 // ── calibration (AnyJev observe() pattern — outcomes feed back to self-calibrate) ──

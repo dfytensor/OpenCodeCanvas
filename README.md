@@ -105,6 +105,18 @@ deepseek-chat，60 题随机抽样（seed=42，`bench/humaneval.ts`，可复现�
 - **权限门**：Jev Noul（safe 分类）→ 高置信自动放行，低置信询问用户
 - **校准**：routing.jsonl + calibration.jsonl → 置信度自调（AnyJev observe() 模式）
 
+### 本地决策层（零成本 / 离线 / 隐私）
+
+无 OPENROUTER_API_KEY 时，Jev 自动探测本机 OpenAI 兼容端点（默认 `:11434`，可用 `OCC_JEV_LOCAL` / `OCC_JEV_LOCAL_MODEL` 指定），用本地小模型（实测 MiniCPM5-2B @ 4090，llama.cpp Q4_K_M）承担三级决策：
+
+| 决策 | 本地实测 | 成本 |
+|---|---|---|
+| route（ANSWER/BUILD + 并行） | 5/5 准确，~500ms | $0 |
+| goal_met（验收快筛） | 正反例全对，0.85 快收 | $0 |
+| tool_safe（权限分类） | 危险/安全分类正确；**安全帽：本地概率封顶 0.85，永不越过 0.9 自动放行线** | $0 |
+
+级联次序：OpenRouter Jev（质量最高）→ 本地小模型（$0）→ GLM 兜底。任意一级不可用自动滑落。
+
 ## 设计原则
 
 1. 继承 = 投影，不是复制
