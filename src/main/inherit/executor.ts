@@ -1135,6 +1135,7 @@ async function runAdaptive(
   let fastTried = false
   const tryFast = async (taskList: string[]): Promise<boolean> => {
     if (fastTried) return false
+    if (process.env.OCC_NO_FAST) return false // test knob: force the heavy pipeline
     fastTried = true
     return tryFastPath(rootDir, opts.goal, taskList, cid)
   }

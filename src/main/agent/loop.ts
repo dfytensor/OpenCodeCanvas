@@ -331,6 +331,10 @@ export async function runAgentLoop(opts: {
     steps++
     opts.callbacks.onEvent({ type: 'step', text: String(steps) })
 
+    // context governance: stub old tool results once the transcript bloats —
+    // full原文 stays on disk (agent.jsonl), the context keeps short references
+    compactHistory(messages)
+
     let res: ChatResponse
     try {
       res = await chatCompletion(opts.provider, opts.model, messages, opts.tools.defs, opts.signal ?? new AbortController().signal)
@@ -373,9 +377,54 @@ export async function runAgentLoop(opts: {
         result = `tool error: ${String(e)}`
       }
       opts.callbacks.onEvent({ type: 'tool_result', tool: call.function.name })
-      messages.push({ role: 'tool', tool_call_id: call.id, content: result })
+      messages.push({ role: 'tool', tool_call_id: call.id, content: capToolResult(result) })
     }
   }
 
   return { messages, finalText, steps, usage, aborted: false }
+}
+
+// ── in-loop context governance (docs/context-governance.md §三) ──
+
+const TOOL_RESULT_CAP = 8_000
+const COMPACT_THRESHOLD_CHARS = 30_000
+const COMPACT_THRESHOLD_STEPS = 14
+const KEEP_RECENT = 8
+
+/** hard cap at creation: a runaway read_file must not own the transcript */
+function capToolResult(result: string): string {
+  if (result.length <= TOOL_RESULT_CAP) return result
+  return (
+    result.slice(0, TOOL_RESULT_CAP) +
+    `\n…[工具结果已截断，原文 ${result.length} 字符已落盘；需要更多请用更窄范围/offset 重读]`
+  )
+}
+
+function estChars(messages: AgentMessage[]): number {
+  let n = 0
+  for (const m of messages) {
+    n += m.content?.length ?? 0
+    for (const tc of m.tool_calls ?? []) n += tc.function.name.length + tc.function.arguments.length
+  }
+  return n
+}
+
+/** stub the tool results of older steps into short references; structure
+ *  (assistant tool_calls + tool pairs) stays intact so the transcript remains
+ *  API-valid. Idempotent — stubs are short and never re-stubbed. */
+function compactHistory(messages: AgentMessage[]): void {
+  if (estChars(messages) < COMPACT_THRESHOLD_CHARS && messages.length < COMPACT_THRESHOLD_STEPS) return
+  const stop = Math.max(2, messages.length - KEEP_RECENT)
+  let compacted = 0
+  for (let i = 2; i < stop; i++) {
+    const m = messages[i]
+    if (m.role === 'tool' && (m.content?.length ?? 0) > 300) {
+      const first = (m.content ?? '').slice(0, 240).replace(/\s+/g, ' ')
+      messages[i] = { ...m, content: `[已压实] ${first}…（原文已落盘 agent.jsonl，需要全文请用工具重读）` }
+      compacted++
+    }
+  }
+  if (compacted > 0) {
+    trace(`compactHistory: stubbed ${compacted} tool results, chars ${estChars(messages)}`)
+  }
 }

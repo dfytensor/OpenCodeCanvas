@@ -94,6 +94,10 @@ deepseek-chat，60 题随机抽样（seed=42，`bench/humaneval.ts`，可复现�
 
 > **轻任务负收益区已收复**：单次生成 + 语法门 + 产物闭环，成本 ~2× 达到与裸模型持平的正确率，且自带 baseline 没有的东西——语法门、产物闭环、provider failover、项目记忆。任何门失败自动升级完整管线。重任务（多步/改真实仓库）走隔离工作区 + 验收员管线：涌现探针实测 68s/35k tokens vs baseline 121s/50k tokens——**又快又省**。
 
+## 上下文治理
+
+见 [docs/context-governance.md](docs/context-governance.md)。核心：世界状态落盘、上下文持引用、工具结果当轮内联跨轮压实（`compactHistory`，实测多轮长任务 25 次压实零 API 错误）、思考不跨轮而结论压缩跨轮。
+
 ## Jev/AnyJev 集成
 
 - **Round-0 规划**：Jev Choice（ANSWER/BUILD + 并行判定）→ GLM 兜底
