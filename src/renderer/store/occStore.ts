@@ -341,7 +341,17 @@ export const useOccStore = create<OccState>()((set, get) => ({
     if (cached) return cached
     try {
       const m = await window.electronAPI.occ.inspectNode(nodeId)
-      if (m) set((s) => ({ inspectCache: { ...s.inspectCache, [nodeId]: m } }))
+      if (m) {
+        set((s) => {
+          const cache = { ...s.inspectCache, [nodeId]: m }
+          // long-run hygiene: FIFO cap — hover caches of dead nodes are cheap to refetch
+          const keys = Object.keys(cache)
+          if (keys.length > 40) {
+            for (const k of keys.slice(0, keys.length - 40)) delete cache[k]
+          }
+          return { inspectCache: cache }
+        })
+      }
       return m
     } catch {
       return null

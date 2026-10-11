@@ -39,6 +39,28 @@ export async function openProjectWithGraph(
   return { project, graph }
 }
 
+/** Long-horizon crash recovery: in a fresh process every running/provisioning/
+ *  awaiting node is an orphan (pipelines live in main-process memory). Called
+ *  by the ipc layer on FIRST open of a project per boot — never re-open, or it
+ *  would kill live pipelines. */
+export async function recoverOrphanNodes(rootDir: string): Promise<number> {
+  const graph = await getGraph(rootDir)
+  let n = 0
+  for (const node of Object.values(graph.nodes)) {
+    if (node.status === 'running' || node.status === 'provisioning' || node.status === 'awaiting_input') {
+      await patchNode(rootDir, node.id, {
+        status: 'failed',
+        error: 'App 中断恢复：进程重启导致该任务中断——可直接重发目标续跑（前沿继承，不会重做已完成部分）'
+      }).catch(() => undefined)
+      n++
+    }
+  }
+  if (n > 0) {
+    console.error(`[recovery] ${rootDir}: ${n} orphaned node(s) marked failed (restart-interrupted)`)
+  }
+  return n
+}
+
 export async function ensureMainline(
   rootDir: string
 ): Promise<{ project: Project; rootNode: SessionNode }> {

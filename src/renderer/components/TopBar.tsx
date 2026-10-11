@@ -20,6 +20,8 @@ export default function TopBar(): React.ReactElement {
   const [jevKey, setJevKeyInput] = useState(() => window.localStorage.getItem('occ-jev-key') ?? '')
   const [budgetK, setBudgetK] = useState(() => String(Math.round((project?.policy.budgetTokensPerChat ?? 0) / 1000)))
   const [permMode, setPermMode] = useState<'ask' | 'auto'>(project?.policy.toolPermission ?? 'ask')
+  const [rounds, setRounds] = useState(() => String(project?.policy.maxRounds ?? 5))
+  const [steps, setSteps] = useState(() => String(project?.policy.maxStepsPerNode ?? 32))
 
   useEffect(() => { void init() }, [init])
   useEffect(() => { if (project && !models) void loadModels() }, [project, models, loadModels])
@@ -173,6 +175,32 @@ export default function TopBar(): React.ReactElement {
                   <option value="auto">自动放行（信任本机环境）</option>
                 </select>
               </label>
+              <div className="mb-3 flex gap-2">
+                <label className="flex-1 text-[10px] text-gray-400">
+                  验收轮次上限
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    className="mt-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
+                    value={rounds}
+                    onChange={(e) => setRounds(e.target.value)}
+                    title="单次目标最多多少轮验收-续跑循环（长时程深度）"
+                  />
+                </label>
+                <label className="flex-1 text-[10px] text-gray-400">
+                  单节点步数上限
+                  <input
+                    type="number"
+                    min={4}
+                    max={96}
+                    className="mt-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
+                    value={steps}
+                    onChange={(e) => setSteps(e.target.value)}
+                    title="每个 worker 最多多少个工具步"
+                  />
+                </label>
+              </div>
             </>
           )}
           <button
@@ -182,7 +210,12 @@ export default function TopBar(): React.ReactElement {
               void window.electronAPI.occ.setJevKey(jevKey)
               if (project) {
                 void window.electronAPI.occ
-                  .updatePolicy({ budgetTokensPerChat: Math.max(0, Number(budgetK) || 0) * 1000, toolPermission: permMode })
+                  .updatePolicy({
+                    budgetTokensPerChat: Math.max(0, Number(budgetK) || 0) * 1000,
+                    toolPermission: permMode,
+                    maxRounds: Math.min(20, Math.max(1, Number(rounds) || 5)),
+                    maxStepsPerNode: Math.min(96, Math.max(4, Number(steps) || 32))
+                  })
                   .then((p) => useOccStore.setState({ project: p }))
                   .catch(() => undefined)
               }

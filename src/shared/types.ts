@@ -152,6 +152,10 @@ export interface ProjectPolicy {
   budgetTokensPerChat: number
   /** sensitive tools (bash/write/edit) ask the user before running; 'auto' runs without asking */
   toolPermission: 'ask' | 'auto'
+  /** per-pipeline verification rounds before forced stop (long-horizon depth) */
+  maxRounds: number
+  /** per-worker agent-loop tool-step cap */
+  maxStepsPerNode: number
 }
 
 export const DEFAULT_POLICY: ProjectPolicy = {
@@ -162,7 +166,9 @@ export const DEFAULT_POLICY: ProjectPolicy = {
   autonomy: 'confirm',
   maxTokensPerNode: 120_000,
   budgetTokensPerChat: 0,
-  toolPermission: 'ask'
+  toolPermission: 'ask',
+  maxRounds: 5,
+  maxStepsPerNode: 32
 }
 
 export interface Project {

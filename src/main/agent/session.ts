@@ -205,7 +205,7 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
           return tool.run(args)
         }
       },
-      maxSteps: 32,
+      maxSteps: getActiveProject()?.policy.maxStepsPerNode ?? 32,
       signal: session.ctrl.signal,
       callbacks: {
         onUsage: (u) => {
@@ -316,6 +316,7 @@ export async function startAgentSession(
   })
 
   sessions.set(session.id, session)
+  gcSessions()
   await patchNode(rootDir, node.id, { sessionId: session.id, channel: 'brief' }).catch(() => undefined)
   chat('worker', `▸ ${node.title} [${session.providerRef}] started`, node.id, session.chatId)
   await persist(session)
@@ -327,6 +328,26 @@ export async function startAgentSession(
 export function agentSessionBusy(nodeId: NodeID): boolean {
   for (const s of sessions.values()) if (s.nodeId === nodeId) return s.busy
   return false
+}
+
+/** long-run hygiene: cap the in-memory session map — idle/terminal sessions
+ *  of long-gone nodes are dropped FIFO; busy ones and the newest are kept */
+function gcSessions(): void {
+  const MAX = 100
+  if (sessions.size <= MAX) return
+  const ordered = [...sessions.entries()].reverse() // newest first
+  const keep = new Set(ordered.slice(0, MAX).map(([id]) => id))
+  for (const [id, s] of sessions) {
+    if (keep.has(id) || s.busy) continue
+    if (s.aborted) {
+      sessions.delete(id)
+    }
+  }
+  // still over? drop oldest idle regardless
+  for (const [id, s] of sessions) {
+    if (sessions.size <= MAX) break
+    if (!s.busy) sessions.delete(id)
+  }
 }
 
 export async function agentSend(rootDir: string, nodeId: NodeID, message: string): Promise<void> {

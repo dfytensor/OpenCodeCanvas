@@ -12,7 +12,7 @@ import type {
 import { ensureServer, getServer } from './opencode/server'
 import { probeCapabilities } from './opencode/probe'
 import { ocApi } from './opencode/api'
-import { openProjectWithGraph } from './project/lifecycle'
+import { openProjectWithGraph, recoverOrphanNodes } from './project/lifecycle'
 import { getActiveProject, setActiveProject, updatePolicy } from './project/registry'
 import { getGraph, propagateTaint, summarizeNodes } from './graph/store'
 import { onOccEvent } from './graph/events'
@@ -79,6 +79,10 @@ export function registerIpc(): void {
     return probeCapabilities()
   })
 
+  // projects already recovery-swept in this process — re-opens must never
+  // sweep again or they would fail live pipelines
+  const sweptProjects = new Set<string>()
+
   ipcMain.handle('occ:openProject', async (_e, rootDir: string) => {
     // the opencode server is only needed by the opencode engine; native runs
     // without it. A missing/broken CLI must never block opening a project.
@@ -86,6 +90,13 @@ export function registerIpc(): void {
       await ensureServer(rootDir)
     } catch (e) {
       console.error('[occ] opencode serve unavailable (native engine unaffected):', String(e).slice(0, 140))
+    }
+    if (!sweptProjects.has(rootDir)) {
+      sweptProjects.add(rootDir)
+      try {
+        const orphans = await recoverOrphanNodes(rootDir)
+        if (orphans > 0) console.error(`[occ] recovered ${orphans} orphaned node(s) in ${rootDir}`)
+      } catch { /* recovery is best-effort */ }
     }
     await openProjectWithGraph(rootDir)
     try {

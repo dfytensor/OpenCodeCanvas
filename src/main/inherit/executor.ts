@@ -1100,7 +1100,8 @@ async function runAdaptive(
   rootDir: string,
   opts: { parentId: NodeID; goal: string; maxRounds?: number; channel?: 'fork' | 'brief'; chatId?: NodeID }
 ): Promise<void> {
-  const maxRounds = opts.maxRounds ?? 5
+  const project0 = getActiveProject()
+  const maxRounds = opts.maxRounds ?? project0?.policy.maxRounds ?? 5
   const channel = opts.channel ?? 'fork'
   const cid = opts.chatId
   let baseId = opts.parentId
