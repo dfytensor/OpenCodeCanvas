@@ -1286,7 +1286,8 @@ async function runAdaptive(
     // base = mainline@now (shared snapshot) so every worker sees ALL prior
     // rounds' merged work; conversation context comes from the fork transcript
     const BB_HINT =
-      '\n\n协作约定：工作区根目录有 BLACKBOARD.md（兄弟 agent 的发现共享板）——开工前先读一遍；完成关键步骤后把你的发现追加一行到末尾（格式：- [发现] 说明）。不要删除他人内容。'
+      '\n\n协作约定：工作区根目录有 BLACKBOARD.md（兄弟 agent 的发现共享板）——开工前先读一遍；完成关键步骤后把你的发现追加一行到末尾（格式：- [发现] 说明）。不要删除他人内容。' +
+      '\n工作记忆约定：把你的计划、关键中间结果和待办写进工作区根目录的 notes.md，并随进度更新它——长任务中对话历史会被压实，notes.md 是你唯一可靠的记忆；忘记之前的进展时，先读 notes.md。'
     const childIds: NodeID[] = []
     for (const chunk of chunks) {
       for (const task of chunk) {

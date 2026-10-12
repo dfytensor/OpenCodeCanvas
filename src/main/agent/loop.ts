@@ -457,6 +457,9 @@ export async function runAgentLoop(opts: {
   signal?: AbortSignal
   /** live partial text as the model generates — drives the streaming UI */
   onStream?: (partial: string) => void
+  /** working memory: absolute path to the agent's notes.md — re-injected on
+   *  compaction so the plan survives transcript stubbing */
+  scratchpadPath?: string
 }): Promise<LoopResult> {
   const messages = [...opts.messages]
   const maxSteps = opts.maxSteps ?? 24
@@ -473,7 +476,7 @@ export async function runAgentLoop(opts: {
 
     // context governance: stub old tool results once the transcript bloats —
     // full原文 stays on disk (agent.jsonl), the context keeps short references
-    compactHistory(messages)
+    compactHistory(messages, opts.scratchpadPath)
 
     let res: ChatResponse
     try {
@@ -559,7 +562,7 @@ function estChars(messages: AgentMessage[]): number {
 /** stub the tool results of older steps into short references; structure
  *  (assistant tool_calls + tool pairs) stays intact so the transcript remains
  *  API-valid. Idempotent — stubs are short and never re-stubbed. */
-function compactHistory(messages: AgentMessage[]): void {
+function compactHistory(messages: AgentMessage[], scratchpadPath?: string): void {
   if (estChars(messages) < COMPACT_THRESHOLD_CHARS && messages.length < COMPACT_THRESHOLD_STEPS) return
   const stop = Math.max(2, messages.length - KEEP_RECENT)
   let compacted = 0
@@ -572,6 +575,21 @@ function compactHistory(messages: AgentMessage[]): void {
     }
   }
   if (compacted > 0) {
+    // working-memory re-injection: the plan lives in notes.md, not the
+    // transcript — hand it back right where older context was stubbed
+    if (scratchpadPath) {
+      try {
+        const raw = require('fs').readFileSync(scratchpadPath, 'utf8') as string
+        const note = raw.slice(0, 1400).trim()
+        if (note) {
+          const reinject: AgentMessage = {
+            role: 'user',
+            content: `[工作记忆恢复] 对话早段已被压实。你的工作笔记（notes.md）当前内容：\n${note}\n（以此为准继续；笔记过时请先更新它）`
+          }
+          messages.splice(stop, 0, reinject)
+        }
+      } catch { /* no notes yet — fine */ }
+    }
     trace(`compactHistory: stubbed ${compacted} tool results, chars ${estChars(messages)}`)
   }
 }

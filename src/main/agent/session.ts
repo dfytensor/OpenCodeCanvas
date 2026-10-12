@@ -211,6 +211,7 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
       maxSteps: getActiveProject()?.policy.maxStepsPerNode ?? 32,
       signal: session.ctrl.signal,
       onStream: (partial) => emitStream(partial),
+      scratchpadPath: join(session.workDir, 'notes.md'),
       callbacks: {
         onUsage: (u) => {
           // meter per-step so costs are visible even if the turn times out
