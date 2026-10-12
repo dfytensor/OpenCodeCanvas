@@ -33,6 +33,38 @@ export async function openProjectWithGraph(
         'utf8'
       )
     }
+    // skills-as-state: capability registry — drop a .md file to teach the agent
+    const skillsDir = join(rootDir, '.occ', 'skills')
+    if (!existsSync(skillsDir)) {
+      await mkdir(skillsDir, { recursive: true })
+      await writeFile(
+        join(skillsDir, 'README.md'),
+        [
+          '# 技能注册表（skills-as-state）',
+          '',
+          '把能力写成 .md 文件放进本目录，agent 开工时会看到索引，需要时读取全文遵循执行。',
+          '',
+          '文件格式：',
+          '  when: 什么情况下使用这个技能（一行，会出现在 agent 的技能索引里）',
+          '  ----',
+          '  技能的完整指令/流程/脚本……',
+          '',
+          '示例见 deploy.md.example（重命名为 .md 即生效）。'
+        ].join('\n'),
+        'utf8'
+      )
+      await writeFile(
+        join(skillsDir, 'deploy.md.example'),
+        [
+          'when: 用户要求部署、发布或上线本项目时',
+          '----',
+          '1. 运行 npm run build 确认构建通过',
+          '2. 运行测试套件',
+          '3. 按项目实际的发布流程执行（在此写下你的真实流程）'
+        ].join('\n'),
+        'utf8'
+      )
+    }
   } catch {
     // best-effort — a read-only project root must not block opening
   }

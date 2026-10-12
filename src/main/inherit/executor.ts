@@ -691,6 +691,31 @@ async function entityHint(rootDir: string): Promise<string> {
   }
 }
 
+/** skills-as-state: .occ/skills/*.md is a capability registry — the INDEX
+ *  (name + when-to-use) is injected, full content materializes on demand via
+ *  read_file. Adding a skill = dropping a file. No code changes. */
+async function skillsHint(rootDir: string): Promise<string> {
+  try {
+    const { readdir, readFile } = await import('fs/promises')
+    const dir = join(rootDir, '.occ', 'skills')
+    if (!existsSync(dir)) return ''
+    const files = (await readdir(dir)).filter((f) => f.endsWith('.md') && f.toLowerCase() !== 'readme.md').slice(0, 12)
+    if (files.length === 0) return ''
+    const lines: string[] = []
+    for (const f of files) {
+      try {
+        const raw = await readFile(join(dir, f), 'utf8')
+        const when = /^when:\s*(.+)$/m.exec(raw)?.[1] ?? raw.split('\n')[0].replace(/^#\s*/, '')
+        lines.push(`- .occ/skills/${f} — ${when.slice(0, 100)}`)
+      } catch { /* skip unreadable */ }
+    }
+    if (lines.length === 0) return ''
+    return `\n\n可用技能（状态中的能力注册表——任务匹配时用 read_file 读取该文件全文并遵循执行）：\n${lines.join('\n')}`
+  } catch {
+    return ''
+  }
+}
+
 /** Project memory: .occ/CONTEXT.md is the user-curated ground truth (stack,
  *  conventions, landmines). Injected into every worker and verifier so the
  *  first attempt already knows the project — fewer rounds, fewer tokens. */async function projectContextHint(rootDir: string): Promise<string> {
@@ -1416,7 +1441,7 @@ async function runAdaptive(
           kind: 'fork',
           channel,
           title: task.slice(0, 24) || `worker-r${round}`,
-          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir),
+          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir) + await skillsHint(rootDir),
           chatId: cid
         })
         childIds.push(res.node.id)
@@ -1629,7 +1654,7 @@ async function runAdaptive(
           `The inherited blocks summarize what workers claim, and this workspace IS ` +
           `the merged project root. Verify FUNCTIONALLY: run the code, read the named ` +
           `files, check every requirement (tools are for verification only — do not modify files). ` +
-          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir),
+          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir) + await skillsHint(rootDir),
         chatId: cid
       }
     )

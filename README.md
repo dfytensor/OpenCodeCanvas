@@ -47,6 +47,7 @@ src/main/
 │   ├── loop.ts      # 工具循环（http.request，零 undici）
 │   ├── providers.ts # 多 provider 目录（zhipuai/deepseek/本地）
 │   ├── session.ts   # 会话注册 + 权限门 + 白板
+│   ├── …            # STATE.md/实体表/技能注册表 蒸发在 .occ/（状态层）
 │   └── tools.ts     # bash/read/write/edit/list（沙箱囚禁）
 ├── inherit/         # 自适应管线
 │   ├── executor.ts  # 经验路由 + 变体竞争 + 产物闭环 + 验收级联

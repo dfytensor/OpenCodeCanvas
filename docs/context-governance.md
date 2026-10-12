@@ -17,6 +17,7 @@
 | worker 循环内 | 工具结果 ≤8k 字符，超限截断并明示；整体超阈值后压实旧步骤为「已压实」短引用 | `loop.ts compactHistory()` |
 | worker 工作记忆 | 计划/中间结果/待办写 notes.md；压实发生时自动重注入（压实免疫） | `scratchpadPath` |
 | 项目工作状态 | .occ/STATE.md：每次管线结束自动蒸馏一条（目标/结果/产物），滚动保留最新；下一目标 kickoff 注入 | `updateProjectState` / `projectStateHint` |
+| 技能注册表 | .occ/skills/*.md = 状态中的能力：kickoff 注入索引（name+when），全文按需 read_file 解引用；加技能=丢文件，零代码 | skillsHint |
 | 实体表（指代消解） | .occ/entities.jsonl：文件实体带时间戳+来源（applied/attempted），kickoff 注入最近 12 条——「它/那个/刚才」查表解析，不靠 LLM 猜 | `recordEntities` / `entityHint` |
 | worker↔worker | 不传过程，只传 BLACKBOARD 一行发现 + BRIEF 摘要 | `composer.ts digest-merge` |
 | 轮间 | 不重放对话；新轮继承 base 快照 + routing.jsonl 一行经验 | `saveFrontier` / `historyHint` |
