@@ -26,6 +26,9 @@ export default function TopBar(): React.ReactElement {
   const [leModel, setLeModel] = useState('')
   const [lePort, setLePort] = useState('11434')
   const [localOk, setLocalOk] = useState(false)
+  const [provId, setProvId] = useState('zhipuai-coding-plan')
+  const [provKey, setProvKey] = useState('')
+  const [provTest, setProvTest] = useState<string>('')
 
   useEffect(() => { void init() }, [init])
   useEffect(() => { if (project && !models) void loadModels() }, [project, models, loadModels])
@@ -153,8 +156,54 @@ export default function TopBar(): React.ReactElement {
       </button>
 
       {showSettings && (
-        <div className="absolute right-3 top-12 z-50 w-72 rounded-lg border border-canvas-border bg-canvas-node p-3 shadow-xl">
+        <div className="absolute right-3 top-12 z-50 max-h-[82vh] w-72 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-node p-3 shadow-xl">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500">Settings</p>
+          <label className="mb-2 block text-[10px] text-gray-400">
+            模型 Provider（第一公里：贴 key → 测试 → 保存）
+            <div className="mt-1 flex gap-1.5">
+              <select
+                className="min-w-0 flex-1 rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
+                value={provId}
+                onChange={(e) => { setProvId(e.target.value); setProvTest('') }}
+              >
+                <option value="zhipuai-coding-plan">GLM Coding Plan（智谱）</option>
+                <option value="deepseek">DeepSeek</option>
+              </select>
+              <button
+                className="shrink-0 rounded-md border border-canvas-border px-2 py-1 text-[10px] text-gray-300 transition-colors hover:border-canvas-accent hover:text-canvas-accent"
+                onClick={() => {
+                  setProvTest('测试中…')
+                  void window.electronAPI.occ.testProvider(provId).then((r) => {
+                    setProvTest(r.ok ? `✅ 连通（${r.model}，${r.ms}ms）` : `❌ ${r.error ?? '失败'}`)
+                  })
+                }}
+              >
+                测试
+              </button>
+            </div>
+            <div className="mt-1 flex gap-1.5">
+              <input
+                type="password"
+                className="min-w-0 flex-1 rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
+                placeholder="API Key"
+                value={provKey}
+                onChange={(e) => setProvKey(e.target.value)}
+              />
+              <button
+                className="shrink-0 rounded-md bg-canvas-accent px-2.5 py-1 text-[10px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+                disabled={!provKey.trim()}
+                onClick={() => {
+                  void window.electronAPI.occ.setProviderKey(provId, provKey.trim()).then(() => {
+                    setProvKey('')
+                    setProvTest('已保存 — 点「测试」验证')
+                  })
+                }}
+              >
+                保存
+              </button>
+            </div>
+            {provTest && <span className={`mt-1 block text-[9px] ${provTest.startsWith('✅') ? 'text-emerald-400' : provTest === '测试中…' ? 'text-gray-500' : 'text-red-400'}`}>{provTest}</span>}
+          </label>
           <label className="mb-2 block text-[10px] text-gray-400">
             OpenRouter API Key
             <input

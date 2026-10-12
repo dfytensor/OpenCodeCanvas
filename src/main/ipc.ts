@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import type {
   InheritPlan,
   NodeID,
@@ -132,6 +132,70 @@ export function registerIpc(): void {
 
   ipcMain.handle('occ:getSettings', async () => {
     return readSettings()
+  })
+
+  // ── acceptance report card: structured outcome for a chat ──
+  ipcMain.handle('occ:chatStats', async (_e, chatId: NodeID) => {
+    const rootDir = requireProject()
+    const file = join(rootDir, '.occ', 'orchestrator', 'routing.jsonl')
+    let rec: Record<string, unknown> | null = null
+    try {
+      if (existsSync(file)) {
+        const raw = readFileSync(file, 'utf8')
+        for (const l of raw.split('\n').filter(Boolean)) {
+          try {
+            const o = JSON.parse(l) as Record<string, unknown>
+            if (o.chatId === chatId) rec = o
+          } catch { /* skip malformed line */ }
+        }
+      }
+    } catch { /* best-effort */ }
+    const g = await getGraph(rootDir)
+    const workers = Object.values(g.nodes).filter((n) => n.parents.includes(chatId) && n.kind === 'fork').length
+    if (!rec) return { workers, fastPath: false }
+    return { ...rec, workers }
+  })
+
+  // ── provider setup wizard ──
+  ipcMain.handle('occ:setProviderKey', async (_e, providerId: string, key: string, baseURL?: string) => {
+    const { homedir } = await import('os')
+    const cfgPath = join(homedir(), '.config', 'opencode', 'opencode.json')
+    let cfg: Record<string, unknown> = {}
+    try {
+      cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>
+    } catch { /* fresh config */ }
+    const providers = (cfg.provider ?? {}) as Record<string, unknown>
+    const existing = (providers[providerId] as { options?: Record<string, unknown> }) ?? {}
+    providers[providerId] = {
+      ...existing,
+      options: { ...existing.options, apiKey: key, ...(baseURL ? { baseURL } : {}) }
+    }
+    cfg.provider = providers
+    const { mkdirSync } = await import('fs')
+    mkdirSync(join(homedir(), '.config', 'opencode'), { recursive: true })
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf8')
+    // providers cache in providers.ts must refresh to see the new key
+    const { listAgentProviders } = await import('./agent/providers')
+    listAgentProviders(true)
+    return { ok: true }
+  })
+
+  ipcMain.handle('occ:testProvider', async (_e, providerId: string) => {
+    const { resolveAgentModel } = await import('./agent/providers')
+    const { completeChat } = await import('./agent/loop')
+    const resolved = resolveAgentModel(`${providerId}/`)
+    if (!resolved) return { ok: false, error: `provider '${providerId}' 没有配置 key 或 baseURL` }
+    const t0 = Date.now()
+    try {
+      await completeChat({
+        provider: resolved.provider,
+        model: resolved.model,
+        messages: [{ role: 'user', content: '回复两个字母：OK' }]
+      })
+      return { ok: true, ms: Date.now() - t0, model: resolved.model }
+    } catch (e) {
+      return { ok: false, error: String(e).slice(0, 140) }
+    }
   })
 
   ipcMain.handle('occ:capabilities', async () => {

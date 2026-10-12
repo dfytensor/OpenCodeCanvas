@@ -126,6 +126,17 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const isBudgetAsk = awaiting && /预算/.test(lastText)
   const gateReplies = isBudgetAsk ? ['继续', '取消'] : ['允许', '全部允许', '拒绝']
 
+  // acceptance report card: structured outcome once the pipeline concluded
+  const hasFinal = log.some((e) => e.role === 'final')
+  const [stats, setStats] = useState<Record<string, unknown> | null>(null)
+  const [statsFetched, setStatsFetched] = useState(false)
+  useEffect(() => {
+    if (!hasFinal || statsFetched || working) return
+    setStatsFetched(true)
+    void window.electronAPI.occ.chatStats(id).then(setStats).catch(() => setStatsFetched(true))
+  }, [hasFinal, statsFetched, working, id])
+  const showReport = hasFinal && !working && !!stats && Object.keys(stats).length > 0
+
   return (
     <div
       className={`occ-born flex w-[380px] flex-col overflow-hidden rounded-xl border bg-canvas-node/95 shadow-lg backdrop-blur ${
@@ -169,6 +180,31 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           </button>
         )}
       </div>
+
+      {/* acceptance report card — the moat, made visible */}
+      {showReport && (
+        <div className={`mx-2 mb-1 rounded-lg border px-2.5 py-2 ${(stats?.outcome as string) === 'success' ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-red-500/40 bg-red-500/10'}`}>
+          <div className="mb-1 flex items-center gap-1.5">
+            <span className={`text-[10px] font-semibold ${(stats?.outcome as string) === 'success' ? 'text-emerald-300' : 'text-red-300'}`}>
+              {(stats?.outcome as string) === 'success' ? '✅ 验收报告' : '❌ 验收报告'}
+            </span>
+            <div className="flex-1" />
+            {typeof stats?.fitness === 'number' && (
+              <span className="rounded-sm bg-canvas-bg px-1.5 py-px text-[9px] text-emerald-300">fitness {Number(stats.fitness).toFixed(2)}</span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {stats?.fastPath ? (
+              <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-gray-400">⚡ 快路径 · 语法门</span>
+            ) : (
+              <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-gray-400">⇉ {Number(stats?.rounds ?? 1)} 轮 · {Number(stats?.workers ?? 0)} worker</span>
+            )}
+            <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-gray-400">{Math.round(Number(stats?.tokens ?? 0) / 1000)}k tok</span>
+            {stats?.verified ? <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-emerald-400">🔎 独立复验</span> : null}
+            {stats?.jevAccepted ? <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-canvas-accent">⚡ 本地快筛</span> : null}
+          </div>
+        </div>
+      )}
 
       {/* gate reply bar: permission / budget asks are answered with one click */}
       {awaiting && (isPermAsk || isBudgetAsk) && (
@@ -216,11 +252,20 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           </div>
         )}
         {log.map((c) => (
-          <div key={c.id} className={`flex flex-col ${ROLE_ALIGN[c.role] ?? ''}`}>
+          <div key={c.id} className={`group flex flex-col ${ROLE_ALIGN[c.role] ?? ''}`}>
             <div className={`max-w-[95%] rounded-lg border px-2.5 py-1.5 ${ROLE_STYLE[c.role] ?? ROLE_STYLE.worker}`}>
               <div className="mb-0.5 flex items-center gap-1.5">
                 <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">{ROLE_TAG[c.role] ?? c.role}</span>
                 <span className="text-[8px] opacity-30">{c.time}</span>
+                {c.role === 'final' && (
+                  <button
+                    className="ml-auto text-[8px] opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-60"
+                    title="复制结果"
+                    onClick={() => void navigator.clipboard.writeText(c.text)}
+                  >
+                    ⧉
+                  </button>
+                )}
               </div>
               <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">{c.text}</p>
             </div>

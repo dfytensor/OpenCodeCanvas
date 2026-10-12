@@ -362,6 +362,9 @@ export interface ElectronAPI {
     localJevStart: () => Promise<{ ok: boolean; error?: string }>
     saveLocalEngine: (cfg: { exe?: string; model?: string; port?: number }) => Promise<{ ok: boolean }>
     renameNode: (nodeId: NodeID, title: string) => Promise<{ ok: boolean }>
+    chatStats: (nodeId: NodeID) => Promise<Record<string, unknown>>
+    setProviderKey: (providerId: string, key: string, baseURL?: string) => Promise<{ ok: boolean }>
+    testProvider: (providerId: string) => Promise<{ ok: boolean; ms?: number; model?: string; error?: string }>
     getSettings: () => Promise<{ openrouterKey?: string; lastProject?: string; localEngine?: { exe?: string; model?: string; port?: number } }>
     openProject: (rootDir: string) => Promise<{ project: Project; graph: GraphDoc } | null>
     closeProject: () => Promise<void>
