@@ -609,6 +609,7 @@ async function updateProjectState(rootDir: string, goal: string, outcome: 'succe
     const kept = sections.length ? ('\n## ' + sections.join('\n## ')).slice(-3600) : ''
     await mkdir(join(rootDir, '.occ'), { recursive: true })
     await writeFile(file, header + kept + entry, 'utf8')
+    await recordEntities(rootDir, outcome === 'success' ? 'applied' : 'attempted', extractTargetFiles(goal), entry)
   } catch { /* best-effort */ }
 }
 
@@ -620,6 +621,47 @@ async function projectStateHint(rootDir: string): Promise<string> {
     const body = raw.slice(-1200).trim()
     if (!body) return ''
     return `\n\n项目当前状态（.occ/STATE.md 摘录——之前完成/进行中的工作）：\n${body}`
+  } catch {
+    return ''
+  }
+}
+
+/** entity registry: deterministic reference resolution — 「它/那个/刚才」must
+ *  resolve against recorded entities (path + time + source), never LLM guessing */
+async function recordEntities(rootDir: string, source: string, ids: string[], summary?: string): Promise<void> {
+  try {
+    const { appendFile, mkdir } = await import('fs/promises')
+    const file = join(rootDir, '.occ', 'entities.jsonl')
+    await mkdir(join(rootDir, '.occ'), { recursive: true })
+    const ts = new Date().toISOString()
+    const lines = ids
+      .slice(0, 20)
+      .map((id) => JSON.stringify({ id, kind: 'file', ts, source, summary: (summary ?? '').slice(0, 120) }))
+    if (lines.length > 0) await appendFile(file, lines.join('\n') + '\n', 'utf8')
+  } catch { /* best-effort */ }
+}
+
+async function entityHint(rootDir: string): Promise<string> {
+  try {
+    const { readFile } = await import('fs/promises')
+    const file = join(rootDir, '.occ', 'entities.jsonl')
+    if (!existsSync(file)) return ''
+    const raw = await readFile(file, 'utf8')
+    const recent = raw
+      .split('\n')
+      .filter(Boolean)
+      .slice(-12)
+      .map((l) => {
+        try {
+          const o = JSON.parse(l) as { id: string; ts: string }
+          return `${o.id}（${o.ts.slice(5, 16).replace('T', ' ')}）`
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean) as string[]
+    if (recent.length === 0) return ''
+    return `\n\n已知实体（指代消解用——「它/那个/刚才」大概率指向这些）：\n${recent.join('\n')}`
   } catch {
     return ''
   }
@@ -752,7 +794,7 @@ async function tryFastPath(
               content:
                 'You write files for a coding task. Output EVERY target file in EXACTLY this format and nothing else:\nFILE: <relative/path>\n```<lang>\n<complete file content>\n```'
             },
-            { role: 'user', content: `目标：${goal}\n\n必须产出的文件：${fileList}${await projectStateHint(rootDir)}` }
+            { role: 'user', content: `目标：${goal}\n\n必须产出的文件：${fileList}${await projectStateHint(rootDir)}${await entityHint(rootDir)}` }
           ]
         })
         break
@@ -1337,7 +1379,7 @@ async function runAdaptive(
           kind: 'fork',
           channel,
           title: task.slice(0, 24) || `worker-r${round}`,
-          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir) + await projectStateHint(rootDir),
+          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir),
           chatId: cid
         })
         childIds.push(res.node.id)
@@ -1534,7 +1576,7 @@ async function runAdaptive(
           `The inherited blocks summarize what workers claim, and this workspace IS ` +
           `the merged project root. Verify FUNCTIONALLY: run the code, read the named ` +
           `files, check every requirement (tools are for verification only — do not modify files). ` +
-          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir) + await projectStateHint(rootDir),
+          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir),
         chatId: cid
       }
     )
