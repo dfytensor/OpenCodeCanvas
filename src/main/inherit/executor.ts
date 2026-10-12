@@ -590,6 +590,41 @@ const EVALUATOR_FORMAT =
   'Last line: "FITNESS: <0.00-1.00>" — graded score of how completely the goal is met (0 = not at all, 1 = fully, with working verification).\n' +
   'No other prose before the first line.'
 
+/** Project working state: STATE.md is the system-maintained "where we are" —
+ *  humans don't re-read everything, they keep a state + references. One
+ *  compact entry per pipeline outcome; oldest entries roll off. */
+async function updateProjectState(rootDir: string, goal: string, outcome: 'success' | 'failed', note: string): Promise<void> {
+  try {
+    const { readFile, writeFile, mkdir } = await import('fs/promises')
+    const file = join(rootDir, '.occ', 'STATE.md')
+    const entry =
+      `\n## ${new Date().toISOString().slice(0, 16).replace('T', ' ')} · ${goal.slice(0, 70).replace(/\n/g, ' ')}\n` +
+      `- 结果: ${outcome === 'success' ? '✅ 完成' : '❌ 未完成'}${note ? `\n- ${note.slice(0, 400)}` : ''}\n`
+    let prev = ''
+    try {
+      prev = await readFile(file, 'utf8')
+    } catch { /* fresh */ }
+    const header = prev.startsWith('# ') ? prev.split('\n## ')[0] : '# 项目工作状态（系统自动维护 · 下一目标开工时注入）\n'
+    const sections = prev.split('\n## ').slice(1).filter((s) => s.trim())
+    const kept = sections.length ? ('\n## ' + sections.join('\n## ')).slice(-3600) : ''
+    await mkdir(join(rootDir, '.occ'), { recursive: true })
+    await writeFile(file, header + kept + entry, 'utf8')
+  } catch { /* best-effort */ }
+}
+
+/** cross-session state hint: newest slice of STATE.md for worker kickoffs */
+async function projectStateHint(rootDir: string): Promise<string> {
+  try {
+    const { readFile } = await import('fs/promises')
+    const raw = await readFile(join(rootDir, '.occ', 'STATE.md'), 'utf8')
+    const body = raw.slice(-1200).trim()
+    if (!body) return ''
+    return `\n\n项目当前状态（.occ/STATE.md 摘录——之前完成/进行中的工作）：\n${body}`
+  } catch {
+    return ''
+  }
+}
+
 /** Project memory: .occ/CONTEXT.md is the user-curated ground truth (stack,
  *  conventions, landmines). Injected into every worker and verifier so the
  *  first attempt already knows the project — fewer rounds, fewer tokens. */async function projectContextHint(rootDir: string): Promise<string> {
@@ -717,7 +752,7 @@ async function tryFastPath(
               content:
                 'You write files for a coding task. Output EVERY target file in EXACTLY this format and nothing else:\nFILE: <relative/path>\n```<lang>\n<complete file content>\n```'
             },
-            { role: 'user', content: `目标：${goal}\n\n必须产出的文件：${fileList}` }
+            { role: 'user', content: `目标：${goal}\n\n必须产出的文件：${fileList}${await projectStateHint(rootDir)}` }
           ]
         })
         break
@@ -769,6 +804,7 @@ async function tryFastPath(
     const tokens = estimateTokens(reply) + estimateTokens(goal)
     chat('manager', `⚡ 快路径完成：${[...files.keys()].join(', ')}（语法门通过）`, undefined, cid)
     chat('final', `已生成 ${files.size} 个文件（${[...files.keys()].join(', ')}），语法校验通过。`, undefined, cid)
+    void updateProjectState(rootDir, goal, 'success', `快路径生成: ${[...files.keys()].join(', ')}`)
     saveRoutingOutcome(rootDir, {
       chatId: cid,
       shape: shapeKey(goal),
@@ -1301,7 +1337,7 @@ async function runAdaptive(
           kind: 'fork',
           channel,
           title: task.slice(0, 24) || `worker-r${round}`,
-          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir),
+          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir) + await projectStateHint(rootDir),
           chatId: cid
         })
         childIds.push(res.node.id)
@@ -1340,6 +1376,7 @@ async function runAdaptive(
         undefined,
         cid
       )
+      void updateProjectState(rootDir, goalText, 'failed', '所有 worker 失败——可重发目标续跑')
       saveRoutingOutcome(rootDir, {
         chatId: cid,
         shape,
@@ -1446,6 +1483,7 @@ async function runAdaptive(
             delta = `\n\n(自我评估：本轮 ${wallSec}s / ${nowK}k tokens | 本聊天历史均值 ${Math.round(prevTok / 1000)}k — ${pct >= 0 ? '省 ' + pct + '%' : '多花 ' + -pct + '%'}；Jev 验收通过 conf=${jv.probability.toFixed(2)})`
           }
           chat('final', `✅ 验收通过（Jev 级联 conf=${jv.probability.toFixed(2)}）。` + suffixOf(applied) + delta, finished[0], cid)
+          void updateProjectState(rootDir, goalText, 'success', `Jev 快筛 conf=${jv.probability.toFixed(2)}` + suffixOf(applied))
           await saveFrontier(rootDir, cid, frontier)
           saveRoutingOutcome(rootDir, {
             chatId: cid,
@@ -1496,7 +1534,7 @@ async function runAdaptive(
           `The inherited blocks summarize what workers claim, and this workspace IS ` +
           `the merged project root. Verify FUNCTIONALLY: run the code, read the named ` +
           `files, check every requirement (tools are for verification only — do not modify files). ` +
-          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir),
+          `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir) + await projectStateHint(rootDir),
         chatId: cid
       }
     )
@@ -1575,6 +1613,7 @@ async function runAdaptive(
         delta = `\n\n(自我评估：本轮 ${wallSec}s / ${nowK}k tokens | 本聊天历史均值 ${Math.round(prevTok / 1000)}k tokens — ${pct >= 0 ? '省 ' + pct + '%' : '多花 ' + -pct + '%'}；验收${verdictDone ? '通过' : '达轮次上限'})`
       }
       chat('final', (answer || '(done — no final text)') + suffixOf(applied) + delta, evaluation.node.id, cid)
+      void updateProjectState(rootDir, goalText, 'success', (answer || '').slice(0, 300) + suffixOf(applied))
       decide(rootDir, 'merge-back', `${applied} workspace(s) applied to mainline`, cid)
       await saveFrontier(rootDir, cid, frontier)
       saveRoutingOutcome(rootDir, {
