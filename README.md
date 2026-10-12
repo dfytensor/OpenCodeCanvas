@@ -107,6 +107,8 @@ deepseek-chat，60 题随机抽样（seed=42，`bench/humaneval.ts`，可复现�
 
 ## Jev/AnyJev 集成
 
+> 全面回归测试矩阵（9 组，执行判分 + 真实 DOM 点击）见 [docs/test-report.md](docs/test-report.md)。
+
 - **Round-0 规划**：Jev Choice（ANSWER/BUILD + 并行判定）→ GLM 兜底
 - **验收快筛**：Jev Noul（goal_met 概率）→ 高置信接受，低置信升级 GLM 验收员
 - **权限门**：Jev Noul（safe 分类）→ 高置信自动放行，低置信询问用户
