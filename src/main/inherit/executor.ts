@@ -45,16 +45,15 @@ const PLAN_FORMAT =
   'Respond in EXACTLY this format:\n' +
   'First line: "PLAN: ANSWER" or "PLAN: BUILD"\n' +
   'ANSWER — no workers will be spawned. Choose this ONLY when the goal needs no file changes and no project inspection (pure explanation/opinion). The following lines are the complete answer.\n' +
-  'BUILD — the following lines are first-round work tasks (max 3):\n' +
-  '  - If subtasks DEPEND on each other, emit ONLY the first one; later rounds continue the chain (serial).\n' +
-  '  - Batch multiple lines ONLY when they are truly independent (parallel).\n' +
-  'No other prose before the first line.'
+  'BUILD — then ONE JSON object, no fences:\n' +
+  '{"tasks":[{"id":"t1","task":"具体任务描述","depends_on":[]},{"id":"t2","task":"…","depends_on":["t1"]}]}\n' +
+  'JSON rules: ≤3 tasks; depends_on only references EARLIER ids (never later, never self); independent tasks have empty depends_on; a task consuming another task\'s output MUST depend on it; each task description must be self-contained and actionable.'
 
 async function planGoal(
   rootDir: string,
   goal: string,
   historyHint?: string
-): Promise<{ mode: 'answer' | 'build'; tasks: string[]; answer: string }> {
+): Promise<{ mode: 'answer' | 'build'; tasks: string[]; levels?: string[][]; answer: string }> {
   const project = getActiveProject()
   // walk the provider chain: a rate-limited or broken primary must not kill
   // the pipeline before it even starts
@@ -79,6 +78,31 @@ async function planGoal(
         .map((l) => l.trim())
         .filter((l) => l && !/^PLAN:/i.test(l))
       if (answerMode) return { mode: 'answer', tasks: [], answer: lines.join('\n').trim() }
+      // ── structured DAG attempt: {"tasks":[{"id","task","depends_on":[…]}]} ──
+      // deps only reference EARLIER ids → levels are well-defined by construction
+      const jm = /\{[\s\S]*\}/.exec(text)
+      if (jm) {
+        try {
+          const j = JSON.parse(jm[0]) as { tasks?: Array<{ id?: string; task?: string; depends_on?: string[] }> }
+          const list = (j.tasks ?? [])
+            .slice(0, 3)
+            .map((t) => ({ id: (t.id ?? '').trim(), task: (t.task ?? '').trim(), depends_on: t.depends_on ?? [] }))
+            .filter((t) => t.task)
+          if (list.length > 0) {
+            const idLevel = new Map<string, number>()
+            const levels: string[][] = []
+            for (const t of list) {
+              const tid = (t.id ?? `t${levels.flat().length + 1}`).trim()
+              const deps = (t.depends_on ?? []).filter((d) => idLevel.has(d))
+              const level = deps.length > 0 ? Math.max(...deps.map((d) => (idLevel.get(d) ?? 0) + 1)) : 0
+              idLevel.set(tid, level)
+              ;(levels[level] ??= []).push(t.task.trim())
+            }
+            const tasks = levels.flat()
+            return { mode: 'build', tasks, levels, answer: '' }
+          }
+        } catch { /* malformed JSON — legacy line parsing below */ }
+      }
       const tasks = lines.slice(0, 3)
       if (tasks.length === 0) return { mode: 'answer', tasks: [], answer: goal }
       return { mode: 'build', tasks, answer: '' }
@@ -1211,6 +1235,7 @@ async function runAdaptive(
   // light-task tier costs baseline parity while still getting syntax gates,
   // artifact closure and provider failover. Any failure falls through to the
   // planner + full pipeline below.
+  let planLevels: string[][] | undefined
   let fastTried = false
   const tryFast = async (taskList: string[]): Promise<boolean> => {
     if (fastTried) return false
@@ -1265,6 +1290,10 @@ async function runAdaptive(
         tasks = [opts.goal.trim()]
       } else {
         tasks = plan.tasks
+        if (plan.levels && plan.levels.length > 1) {
+          planLevels = plan.levels
+          decide(rootDir, 'plan-dag', `levels: ${plan.levels.map((l) => l.length).join('→')}`, cid)
+        }
       }
     }
     decide(rootDir, 'plan', `build: ${tasks.length} task(s)`, cid)
@@ -1355,6 +1384,12 @@ async function runAdaptive(
     } else {
       for (let i = 0; i < tasks.length; i += cap) chunks.push(tasks.slice(i, i + cap))
     }
+    // structured DAG: dependency levels become waves (barrier + merge between)
+    if (planLevels && !isVariantRound) {
+      chunks.length = 0
+      for (const lvl of planLevels) chunks.push(lvl)
+    }
+    const hasLevels = planLevels !== undefined && !isVariantRound
 
     // TRUE model diversity: variant rounds round-robin every usable
     // (provider, model) pair — genuine model-family diversity, not prompts
@@ -1367,7 +1402,9 @@ async function runAdaptive(
       '\n\n协作约定：工作区根目录有 BLACKBOARD.md（兄弟 agent 的发现共享板）——开工前先读一遍；完成关键步骤后把你的发现追加一行到末尾（格式：- [发现] 说明）。不要删除他人内容。' +
       '\n工作记忆约定：把你的计划、关键中间结果和待办写进工作区根目录的 notes.md，并随进度更新它——长任务中对话历史会被压实，notes.md 是你唯一可靠的记忆；忘记之前的进展时，先读 notes.md。'
     const childIds: NodeID[] = []
-    for (const chunk of chunks) {
+    let waveStart = 0
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const chunk = chunks[ci]
       for (const task of chunk) {
         const vi = childIds.length
         const variantPlan =
@@ -1385,7 +1422,23 @@ async function runAdaptive(
         childIds.push(res.node.id)
         chat('worker', `▸ spawned: ${task}`, res.node.id, cid)
       }
-      if (chunks.length > 1) await waitTerminal(rootDir, childIds, 10 * 60 * 1000)
+      if (chunks.length > 1) {
+        await waitTerminal(rootDir, childIds, 10 * 60 * 1000)
+        // DAG waves: land this level into mainline so the NEXT level's base
+        // includes it — dependencies are meaningless without mid-round merge
+        if (hasLevels && ci < chunks.length - 1 && !isVariantRound) {
+          let appliedW = 0
+          for (const id of childIds.slice(waveStart)) {
+            const r = await applyNodeToMainline(rootDir, id).catch(() => ({ ok: false, message: '' }))
+            if (r.ok && !r.message.startsWith('0 applied, 0 deleted')) appliedW++
+          }
+          if (appliedW > 0) {
+            decide(rootDir, 'wave-merge', `${appliedW} workspace(s) merged for next level`, cid)
+            chat('manager', `⚡ 第 ${ci + 1} 层已合并——下一层基于其产出开工`, undefined, cid)
+          }
+        }
+        waveStart = childIds.length
+      }
     }
 
     await waitTerminal(rootDir, childIds, 10 * 60 * 1000)
