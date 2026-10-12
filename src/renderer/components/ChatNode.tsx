@@ -141,7 +141,18 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       {/* header */}
       <div className="flex items-center gap-2 border-b border-canvas-border px-3 py-2">
         <span className={`inline-block h-2 w-2 rounded-full ${STATUS_DOT[node.status]}`} />
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-200">{node.title}</span>
+        <span
+          className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-200"
+          onDoubleClick={() => {
+            const t = window.prompt('重命名聊天', node.title)
+            if (t && t.trim() && t.trim() !== node.title) {
+              void window.electronAPI.occ.renameNode(id, t.trim()).then(() => useOccStore.getState().refresh())
+            }
+          }}
+          title="双击重命名"
+        >
+          {node.title}
+        </span>
         {tokens > 0 && (
           <span className="shrink-0 rounded-sm bg-canvas-bg px-1 py-px text-[8px] text-gray-500" title="本聊天累计 token（含 worker 与验收员）">
             {(tokens / 1000).toFixed(1)}k tok

@@ -22,6 +22,10 @@ export default function TopBar(): React.ReactElement {
   const [permMode, setPermMode] = useState<'ask' | 'auto'>(project?.policy.toolPermission ?? 'ask')
   const [rounds, setRounds] = useState(() => String(project?.policy.maxRounds ?? 5))
   const [steps, setSteps] = useState(() => String(project?.policy.maxStepsPerNode ?? 32))
+  const [leExe, setLeExe] = useState('')
+  const [leModel, setLeModel] = useState('')
+  const [lePort, setLePort] = useState('11434')
+  const [localOk, setLocalOk] = useState(false)
 
   useEffect(() => { void init() }, [init])
   useEffect(() => { if (project && !models) void loadModels() }, [project, models, loadModels])
@@ -29,6 +33,15 @@ export default function TopBar(): React.ReactElement {
     const saved = window.localStorage.getItem('occ-jev-key')
     if (saved) void window.electronAPI.occ.setJevKey(saved)
   }, [])
+  useEffect(() => {
+    if (!showSettings) return
+    void window.electronAPI.occ.getSettings().then((s) => {
+      if (s.localEngine?.exe) setLeExe(s.localEngine.exe)
+      if (s.localEngine?.model) setLeModel(s.localEngine.model)
+      if (s.localEngine?.port) setLePort(String(s.localEngine.port))
+    })
+    void window.electronAPI.occ.localJevStatus().then((st) => setLocalOk(st.ok))
+  }, [showSettings])
 
   const modelValue = project?.policy.defaultModel ?? ''
   const sel = 'rounded-md border border-canvas-border bg-canvas-node px-2 py-1 text-[11px] text-gray-300 outline-none transition-colors focus:border-canvas-accent'
@@ -200,6 +213,40 @@ export default function TopBar(): React.ReactElement {
                     title="每个 worker 最多多少个工具步"
                   />
                 </label>
+              </div>
+              <div className="mb-3 rounded-md border border-canvas-border p-2">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <span className="text-[10px] font-medium text-gray-400">本地决策引擎</span>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${localOk ? 'bg-emerald-500' : 'bg-gray-600'}`} />
+                  <span className="text-[9px] text-gray-600">{localOk ? '运行中 · Jev $0' : '未运行'}</span>
+                </div>
+                <input
+                  className="mb-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[10px] text-gray-300 outline-none focus:border-canvas-accent"
+                  placeholder="llama-server.exe 完整路径"
+                  value={leExe}
+                  onChange={(e) => setLeExe(e.target.value)}
+                />
+                <input
+                  className="mb-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[10px] text-gray-300 outline-none focus:border-canvas-accent"
+                  placeholder="模型 GGUF 完整路径（如 MiniCPM5-2B-Q4_K_M）"
+                  value={leModel}
+                  onChange={(e) => setLeModel(e.target.value)}
+                />
+                <div className="flex items-center gap-1.5">
+                  <button
+                    className="rounded-md border border-canvas-border px-2 py-0.5 text-[9px] text-gray-300 transition-colors hover:border-canvas-accent hover:text-canvas-accent disabled:opacity-40"
+                    onClick={() => {
+                      void window.electronAPI.occ.saveLocalEngine({ exe: leExe, model: leModel, port: Number(lePort) || 11434 })
+                      void window.electronAPI.occ.localJevStart().then((r) => {
+                        void window.electronAPI.occ.localJevStatus().then((st) => setLocalOk(st.ok))
+                        if (!r.ok && r.error) useOccStore.setState({ error: r.error })
+                      })
+                    }}
+                  >
+                    保存并启动
+                  </button>
+                  <span className="text-[9px] text-gray-600">启动后 Jev 决策 $0 · 离线可用</span>
+                </div>
               </div>
             </>
           )}

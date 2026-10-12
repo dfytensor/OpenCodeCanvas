@@ -4,6 +4,12 @@ import { join } from 'path'
 export interface OccSettings {
   openrouterKey?: string
   lastProject?: string
+  /** local decision engine (llama-server) — set once via the settings UI */
+  localEngine?: {
+    exe?: string
+    model?: string
+    port?: number
+  }
 }
 
 function settingsFile(): string {

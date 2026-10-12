@@ -358,6 +358,11 @@ export interface ElectronAPI {
     getLastProject: () => Promise<string | null>
     flash: () => Promise<{ ok: boolean }>
     openProjectDir: () => Promise<string>
+    localJevStatus: () => Promise<{ ok: boolean; port: number }>
+    localJevStart: () => Promise<{ ok: boolean; error?: string }>
+    saveLocalEngine: (cfg: { exe?: string; model?: string; port?: number }) => Promise<{ ok: boolean }>
+    renameNode: (nodeId: NodeID, title: string) => Promise<{ ok: boolean }>
+    getSettings: () => Promise<{ openrouterKey?: string; lastProject?: string; localEngine?: { exe?: string; model?: string; port?: number } }>
     openProject: (rootDir: string) => Promise<{ project: Project; graph: GraphDoc } | null>
     closeProject: () => Promise<void>
     getGraph: () => Promise<GraphDoc | null>

@@ -85,6 +85,14 @@ interface OccState {
   subscribe: () => () => void
 }
 
+function friendly(e: unknown): string {
+  const s = String(e)
+  if (/429|余额不足|无可用资源|额度/.test(s)) return '模型配额不足（429）——等待重置、切换模型，或依赖自动 failover'
+  if (/EPERM|EBUSY|EACCES/.test(s)) return '文件被占用或拒绝访问——关闭占用它的程序后重试'
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|AggregateError|fetch failed/i.test(s)) return '网络连接失败——系统已自动重试，请检查网络或代理'
+  if (/no provider|no usable/i.test(s)) return '没有可用的模型——检查配置或启动本地决策引擎（⚙）'
+  return s.slice(0, 200)
+}
 function pushLog(log: OccLogEntry[], kind: OccLogEntry['kind'], text: string): OccLogEntry[] {
   const entry: OccLogEntry = {
     id: ++logSeq,
@@ -166,7 +174,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       const updated = await window.electronAPI.occ.updatePolicy({ defaultModel: model })
       set({ project: updated })
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -177,7 +185,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       const updated = await window.electronAPI.occ.updatePolicy({ defaultAgent: agent })
       set({ project: updated })
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -189,7 +197,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       set({ project: updated })
       await s.loadModels()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -204,7 +212,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       const s = get()
       await s.loadModels()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     } finally {
       set({ busy: false })
     }
@@ -231,7 +239,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       }
       return id
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
       return null
     }
   },
@@ -255,7 +263,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
     try {
       await window.electronAPI.occ.chatSend(chatId, text)
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -278,7 +286,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       await window.electronAPI.occ.createNode(plan, opts)
       await s.refresh()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     } finally {
       set({ busy: false })
     }
@@ -290,7 +298,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       await window.electronAPI.occ.sendToNode(nodeId, message)
       await get().refresh()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -299,7 +307,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       await window.electronAPI.occ.abortNode(nodeId)
       await get().refresh()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -308,7 +316,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       await window.electronAPI.occ.freezeNode(nodeId)
       await get().refresh()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -317,7 +325,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       await window.electronAPI.occ.unfreezeNode(nodeId)
       await get().refresh()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 
@@ -326,7 +334,7 @@ export const useOccStore = create<OccState>()((set, get) => ({
       await window.electronAPI.occ.archiveNode(nodeId)
       await get().refresh()
     } catch (e) {
-      set({ error: String(e) })
+      set({ error: friendly(e) })
     }
   },
 

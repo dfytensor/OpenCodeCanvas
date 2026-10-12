@@ -1,5 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import type {
   InheritPlan,
   NodeID,
@@ -73,6 +74,64 @@ export function registerIpc(): void {
   ipcMain.handle('occ:openProjectDir', async () => {
     const { shell } = await import('electron')
     return shell.openPath(requireProject())
+  })
+
+  // ── local decision engine (llama-server) ──
+  ipcMain.handle('occ:localJevStatus', async () => {
+    const s = readSettings()
+    const port = s.localEngine?.port ?? 11434
+    try {
+      const ctrl = new AbortController()
+      const kill = setTimeout(() => ctrl.abort(), 1500)
+      const r = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: ctrl.signal })
+      clearTimeout(kill)
+      return { ok: r.ok, port }
+    } catch {
+      return { ok: false, port }
+    }
+  })
+
+  ipcMain.handle('occ:localJevStart', async () => {
+    const s = readSettings()
+    const exe = s.localEngine?.exe
+    const model = s.localEngine?.model
+    const port = s.localEngine?.port ?? 11434
+    if (!exe || !model || !existsSync(exe) || !existsSync(model)) {
+      return { ok: false, error: '请在设置里先填写 llama-server.exe 与模型 GGUF 的完整路径' }
+    }
+    const dir = require('path').dirname(exe)
+    const cmd =
+      `cd /d "${dir}" && llama-server.exe -m "${model}" --port ${port} --host 127.0.0.1 -c 8192 -ngl 99 --no-reasoning-preserve --jinja > llama-server.log 2>&1`
+    const { spawn } = await import('child_process')
+    // detached so the server outlives UI hiccups; log goes next to the exe
+    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/c', cmd], { windowsHide: true, detached: true, stdio: 'ignore' })
+    child.unref()
+    // give it a moment, then report status
+    await new Promise((r) => setTimeout(r, 4000))
+    try {
+      const ctrl = new AbortController()
+      const kill = setTimeout(() => ctrl.abort(), 1500)
+      const r2 = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: ctrl.signal })
+      clearTimeout(kill)
+      return { ok: r2.ok }
+    } catch {
+      return { ok: false, error: '已启动但端口未就绪——首次加载模型可能需要更久，稍后重试状态刷新' }
+    }
+  })
+
+  ipcMain.handle('occ:renameNode', async (_e, nodeId: NodeID, title: string) => {
+    const { patchNode } = await import('./graph/store')
+    await patchNode(requireProject(), nodeId, { title: title.slice(0, 60) })
+    return { ok: true }
+  })
+
+  ipcMain.handle('occ:saveLocalEngine', async (_e, cfg: { exe?: string; model?: string; port?: number }) => {
+    writeSettings({ localEngine: cfg })
+    return { ok: true }
+  })
+
+  ipcMain.handle('occ:getSettings', async () => {
+    return readSettings()
   })
 
   ipcMain.handle('occ:capabilities', async () => {
