@@ -39,6 +39,16 @@ import { resolveAgentModel, resolveAgentModelChain } from '../agent/providers'
 
 // ───────────────────────── round-0 planner: task + cost + topology ─────────────────────────
 
+function trace(m: string): void {
+  if (!process.env.OCC_TRACE) return
+  try {
+    ;(require('fs') as typeof import('fs')).appendFileSync(
+      process.env.OCC_TRACE_FILE ?? 'C:/Users/Administrator/AppData/Local/Temp/occ-trace.log',
+      `${new Date().toISOString()} ${m}\n`
+    )
+  } catch { /* ignore */ }
+}
+
 const PLAN_FORMAT =
   'You are the planner of an agent pipeline. Route this goal at MINIMUM cost.\n' +
   'COST RULE: if ONE agent can complete the goal in a few minutes (create a file, make a small edit, answer from the goal itself), emit exactly ONE task — never split small work.\n' +
@@ -47,13 +57,15 @@ const PLAN_FORMAT =
   'ANSWER — no workers will be spawned. Choose this ONLY when the goal needs no file changes and no project inspection (pure explanation/opinion). The following lines are the complete answer.\n' +
   'BUILD — then ONE JSON object, no fences:\n' +
   '{"tasks":[{"id":"t1","task":"具体任务描述","depends_on":[]},{"id":"t2","task":"…","depends_on":["t1"]}]}\n' +
-  'JSON rules: ≤3 tasks; depends_on only references EARLIER ids (never later, never self); independent tasks have empty depends_on; a task consuming another task\'s output MUST depend on it; each task description must be self-contained and actionable.'
+  'JSON rules: ≤3 tasks; depends_on only references EARLIER ids (never later, never self); independent tasks have empty depends_on; a task consuming another task\'s output MUST depend on it; each task description must be self-contained and actionable.\n' +
+  'ALWAYS add success_criteria: 1-3 条可独立验证的判据，每条以「将验证：」开头，写明用什么命令或读取什么文件来证明完成。例：\n' +
+  '{"tasks":[…],"success_criteria":["将验证：python data.py 输出 3 行","将验证：report.txt 存在且包含行数"]}'
 
 async function planGoal(
   rootDir: string,
   goal: string,
   historyHint?: string
-): Promise<{ mode: 'answer' | 'build'; tasks: string[]; levels?: string[][]; answer: string }> {
+): Promise<{ mode: 'answer' | 'build'; tasks: string[]; levels?: string[][]; criteria: string[]; answer: string }> {
   const project = getActiveProject()
   // walk the provider chain: a rate-limited or broken primary must not kill
   // the pipeline before it even starts
@@ -72,18 +84,19 @@ async function planGoal(
   for (const resolved of chain) {
     try {
       const text = await completeChat({ provider: resolved.provider, model: resolved.model, messages })
+      trace(`planner raw: ${text.slice(0, 500).replace(/\n/g, ' | ')}`)
       const answerMode = /^\s*PLAN:\s*ANSWER/im.test(text)
       const lines = text
         .split('\n')
         .map((l) => l.trim())
         .filter((l) => l && !/^PLAN:/i.test(l))
-      if (answerMode) return { mode: 'answer', tasks: [], answer: lines.join('\n').trim() }
+      if (answerMode) return { mode: 'answer', tasks: [], criteria: [], answer: lines.join('\n').trim() }
       // ── structured DAG attempt: {"tasks":[{"id","task","depends_on":[…]}]} ──
       // deps only reference EARLIER ids → levels are well-defined by construction
       const jm = /\{[\s\S]*\}/.exec(text)
       if (jm) {
         try {
-          const j = JSON.parse(jm[0]) as { tasks?: Array<{ id?: string; task?: string; depends_on?: string[] }> }
+          const j = JSON.parse(jm[0]) as { tasks?: Array<{ id?: string; task?: string; depends_on?: string[] }>; success_criteria?: unknown[] }
           const list = (j.tasks ?? [])
             .slice(0, 3)
             .map((t) => ({ id: (t.id ?? '').trim(), task: (t.task ?? '').trim(), depends_on: t.depends_on ?? [] }))
@@ -99,13 +112,14 @@ async function planGoal(
               ;(levels[level] ??= []).push(t.task.trim())
             }
             const tasks = levels.flat()
-            return { mode: 'build', tasks, levels, answer: '' }
+            const criteria = (j.success_criteria ?? []).filter((x) => typeof x === 'string' && x.trim()).slice(0, 3).map((x) => String(x).trim().slice(0, 150))
+            return { mode: 'build', tasks, levels, criteria, answer: '' }
           }
         } catch { /* malformed JSON — legacy line parsing below */ }
       }
       const tasks = lines.slice(0, 3)
-      if (tasks.length === 0) return { mode: 'answer', tasks: [], answer: goal }
-      return { mode: 'build', tasks, answer: '' }
+      if (tasks.length === 0) return { mode: 'answer', tasks: [], criteria: [], answer: goal }
+      return { mode: 'build', tasks, criteria: [], answer: '' }
     } catch (e) {
       lastErr = e
       if (chain.length > 1) {
@@ -607,6 +621,9 @@ async function waitTerminal(rootDir: string, ids: NodeID[], timeoutMs: number): 
 const EVALUATOR_FORMAT =
   'Verification rules: you MAY run read-only checks (run code, read files) to confirm — but never modify files; worker changes are already merged into this workspace.\n' +
   'If every requirement of the goal is demonstrably met, the verdict is DONE.\n' +
+  'If the kickoff lists numbered 成功标准, you MUST output one line per criterion right after the first line:\n' +
+  '  标准1: PASS — 证据…   （或 FAIL — 缺什么）\n' +
+  'For goals with NO file outputs (pure explanation/research), grade against these meta-standards instead: 来源可查、逻辑一致、结论可复现、无编造事实。\n' +
   'Respond in EXACTLY this format:\n' +
   'First line: "VERDICT: CONTINUE" or "VERDICT: DONE"\n' +
   'If CONTINUE: emit only the FIRST task when subtasks depend on each other (they run as a serial chain across rounds); batch up to 3 only when they are truly independent.\n' +
@@ -1261,6 +1278,8 @@ async function runAdaptive(
   // artifact closure and provider failover. Any failure falls through to the
   // planner + full pipeline below.
   let planLevels: string[][] | undefined
+  let planCriteria: string[] = []
+  let crossChecked = false
   let fastTried = false
   const tryFast = async (taskList: string[]): Promise<boolean> => {
     if (fastTried) return false
@@ -1272,13 +1291,14 @@ async function runAdaptive(
     return
   }
 
-  // ── round-0 planner: Jev cascade (70-500ms, ~$0.0001) → GLM planner fallback ──
+  // ── round-0 planner: Jev cascade — LOCAL/cloud Jev decides the ROUTE cheaply;
+  // the structured planner (JSON-DAG + success criteria) then produces the plan.
+  // Jev replaces only the route guess, never the plan itself.
   try {
-    let planned = false
     if (jevEnabled()) {
       try {
         const j = await jevRoute(opts.goal)
-        decide(rootDir, 'plan-jev', `route=${j.mode} parallel=${j.parallel} conf=${j.confidence} (${Math.round(j.latencyMs ?? 0)}ms)`, cid)
+        decide(rootDir, 'plan-jev', `route=${j.mode} parallel=${j.parallel} conf=${j.confidence} backend=${j.backend ?? 'openrouter'} (${Math.round(j.latencyMs ?? 0)}ms)`, cid)
         if (j.mode === 'answer') {
           // closure applies to every path: ANSWER is only legal when the goal
           // names no missing creation targets — a wrong ANSWER skips the work
@@ -1291,14 +1311,14 @@ async function runAdaptive(
           chat('manager', `Jev said ANSWER, but missing artifacts: ${missing.join(', ')} — rerouting to BUILD`, undefined, cid)
           tasks = [opts.goal.trim()]
         } else {
-          tasks = j.parallel && goalLines.length > 1 ? goalLines : [opts.goal.trim()]
+          // build route confirmed — the structured plan below decides tasks/levels
+          if (j.parallel && goalLines.length > 1) tasks = goalLines
         }
-        planned = true
       } catch (e) {
         chat('manager', `Jev 路由不可用（${String(e).slice(0, 60)}）— 回退 GLM 规划`, undefined, cid)
       }
     }
-    if (!planned) {
+    {
       if (process.env.OCC_DEBUG) console.error('[DBG] planner calling…')
       const plan = await planGoal(rootDir, opts.goal, historyHint)
       if (process.env.OCC_DEBUG) console.error('[DBG] planner →', plan.mode, JSON.stringify(plan.tasks))
@@ -1315,6 +1335,11 @@ async function runAdaptive(
         tasks = [opts.goal.trim()]
       } else {
         tasks = plan.tasks
+        if (plan.criteria.length > 0) {
+          planCriteria = plan.criteria
+          chat('manager', `🎯 评估先行：成功标准 ${plan.criteria.length} 条已在行动前定义`, undefined, cid)
+          decide(rootDir, 'plan-criteria', plan.criteria.join(' | ').slice(0, 250), cid)
+        }
         if (plan.levels && plan.levels.length > 1) {
           planLevels = plan.levels
           decide(rootDir, 'plan-dag', `levels: ${plan.levels.map((l) => l.length).join('→')}`, cid)
@@ -1441,7 +1466,7 @@ async function runAdaptive(
           kind: 'fork',
           channel,
           title: task.slice(0, 24) || `worker-r${round}`,
-          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir) + await skillsHint(rootDir),
+          kickoff: task + BB_HINT + '\n\n完成标准（必须遵守）：改动后必须实际运行/读回验证（运行脚本或读取文件），最终回复中给出验证证据，再声明任务完成。' + (planCriteria.length > 0 ? '\n\n验收标准（评估先行——完成后逐条自我核验，证据写进最终回复）：\n' + planCriteria.map((s) => '- ' + s).join('\n') : '') + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir) + await skillsHint(rootDir),
           chatId: cid
         })
         childIds.push(res.node.id)
@@ -1654,6 +1679,10 @@ async function runAdaptive(
           `The inherited blocks summarize what workers claim, and this workspace IS ` +
           `the merged project root. Verify FUNCTIONALLY: run the code, read the named ` +
           `files, check every requirement (tools are for verification only — do not modify files). ` +
+          (planCriteria.length > 0
+            ? `成功标准（评估先行定义——逐条独立核验，每条给出 PASS 或 FAIL 及证据）：\n${planCriteria.map((s, i) => `标准${i + 1}: ${s}`).join('\n')}\n` +
+              `判定规则：全部 PASS → DONE；任何 FAIL → CONTINUE 并给出修复任务。\n`
+            : '') +
           `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir) + await projectContextHint(rootDir) + await projectStateHint(rootDir) + await entityHint(rootDir) + await skillsHint(rootDir),
         chatId: cid
       }
@@ -1664,7 +1693,7 @@ async function runAdaptive(
     await waitTerminal(rootDir, [evaluation.node.id], 8 * 60 * 1000)
     const eg = await getGraph(rootDir)
     const en = eg.nodes[evaluation.node.id]
-    const text = en ? await lastAssistantText(rootDir, en) : ''
+    let text = en ? await lastAssistantText(rootDir, en) : ''
     roundsUsed = round
     if (!text) {
       chat('final', 'evaluator produced no verdict (provider issue?) — stopping', undefined, cid)
@@ -1703,6 +1732,62 @@ async function runAdaptive(
     if (verdictDone || round === maxRounds) {
       const answer = text.replace(/VERDICT:\s*\w+/i, '').trim()
       const wallSec = Math.round((Date.now() - pipelineStart) / 1000)
+
+      // ── cross-model double-check (缺口C): the verifier can be wrong too.
+      // A DONE with weak fitness gets ONE re-verification by a DIFFERENT
+      // model family before the pipeline may declare victory.
+      const fit = Number(/FITNESS:\s*([0-9.]+)/i.exec(text)?.[1] ?? '1')
+      if (verdictDone && fit < 0.6 && round < maxRounds && !crossChecked) {
+        crossChecked = true
+        const chain2 = resolveAgentModelChain(project0?.policy.defaultModel)
+        const alt = chain2[1] ?? chain2[0]
+        chat('manager', `🔍 验收员也可能错——fitness ${fit.toFixed(2)} < 0.6，换 ${alt.provider.id}/${alt.model} 交叉复核一次`, undefined, cid)
+        const eval2 = await createInheritNode(
+          rootDir,
+          {
+            sources: finished.map((id) => ({ from: { nodeId: id }, take: ['outputs' as const] })),
+            compose: { mode: 'digest-merge', order: 'explicit', dedupe: true, labelSources: true },
+            budget: { maxTokens: project_tokenBudget(rootDir), onOverflow: 'truncate-tail' },
+            verify: true,
+            workspace: {
+              base: { kind: 'snapshot', contentHash: await hashDirFast(rootDir), label: `cross-verify@${new Date().toISOString().slice(0, 16)}`, dir: rootDir },
+              apply: [],
+              onConflict: 'agent'
+            },
+            channel: 'brief',
+            providerRef: `${alt.provider.id}/${alt.model}`
+          },
+          {
+            parents: [baseId, ...finished],
+            kind: 'merge',
+            title: `cross-verify r${round}`,
+            kickoff:
+              `You are the CROSS-CHECK VERIFIER. A previous verifier judged this goal DONE but with weak fitness. ` +
+              `Original goal: "${goalText}". Independently re-verify with your own methods; do not trust the prior verdict. ` +
+              (planCriteria.length > 0 ? `成功标准（逐条核验）：\n${planCriteria.map((s, i) => `标准${i + 1}: ${s}`).join('\n')}\n` : '') +
+              `${EVALUATOR_FORMAT}` + qualityGatesHint(rootDir),
+            chatId: cid
+          }
+        )
+        frontier = eval2.node.id
+        await waitTerminal(rootDir, [eval2.node.id], 8 * 60 * 1000)
+        const eg2 = await getGraph(rootDir)
+        const text2 = eg2.nodes[eval2.node.id] ? await lastAssistantText(rootDir, eg2.nodes[eval2.node.id]) : ''
+        chat('manager', `🔍 交叉复核：${text2.slice(0, 300)}`, eval2.node.id, cid)
+        decide(rootDir, 'cross-verify', text2.slice(0, 250), cid)
+        const stillDone = /VERDICT:\s*DONE/i.test(text2)
+        if (!stillDone) {
+          // the second verifier overruled — continue the loop with its repair task
+          const lines2 = text2.split('\n').map((l) => l.trim()).filter((l2) => l2 && !/^VERDICT:/i.test(l2) && !/^FITNESS:/i.test(l2) && !/^标准\d/i.test(l2))
+          tasks = lines2.slice(0, 1).length > 0 ? [lines2.slice(0, 1)[0] || `继续完成目标：${goalText}`] : [`继续完成目标：${goalText}`]
+          baseId = eval2.node.id
+          applied = 0
+          continue
+        }
+        text = text2 // confirmed — carry the cross-checked verdict forward
+        frontier = eval2.node.id
+      }
+
 
       // reproduction (C↑): if this was a variant round, record the winning
       // strategy so future same-shape bursts reproduce it first
