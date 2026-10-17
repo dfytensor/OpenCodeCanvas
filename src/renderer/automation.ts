@@ -356,16 +356,69 @@ export function initAutomation(): void {
       // restore the shared test project so repeated runs stay deterministic
       try { await store.getState().openProject('F:\\occ-gui-test') } catch { /* best-effort */ }
 
+      // T13: canvas cascade — a new chat must land on a pin that overlaps NO
+      // existing chat (the old modulo-6 cascade stacked every 7th chat)
+      try {
+        const { pinnedPosition } = await import('./lib/layout')
+        const pid = store.getState().project!.id
+        const before = Object.values(store.getState().graph!.nodes).filter((n) => n.kind === 'root').length
+        const id = await store.getState().createChat()
+        const pos = id ? pinnedPosition(pid, id) : undefined
+        if (!id || !pos) throw new Error('createChat returned no id/pin')
+        const clash = Object.values(store.getState().graph!.nodes).some((o) => {
+          if (o.kind !== 'root' || o.id === id) return false
+          const p = pinnedPosition(pid, o.id)
+          return !!p && Math.abs(p.x - pos.x) < 100 && Math.abs(p.y - pos.y) < 100
+        })
+        if (clash) throw new Error('new chat stacked on an existing one at ' + pos.x + ',' + pos.y)
+        await pass('T13 chat-slot no-overlap (' + before + '->' + (before + 1) + ' pins=' + Object.keys(store.getState().chats).length + ')')
+      } catch (e) { await fail('T13 chat-slot no-overlap', String(e)) }
+
+      // T14: 整理 (tidy) — pile two chats by hand, click the button, the whole
+      // canvas re-packs (distinct coordinates + persisted pins in storage)
+      try {
+        const { pinPosition, pinnedPosition } = await import('./lib/layout')
+        const pid = store.getState().project!.id
+        const roots = Object.values(store.getState().graph!.nodes).filter((n) => n.kind === 'root' && n.parents.length === 0)
+        if (roots.length < 2) throw new Error('need 2 roots, found ' + roots.length)
+        pinPosition(pid, roots[0].id, { x: 123, y: 456 })
+        pinPosition(pid, roots[1].id, { x: 123, y: 456 }) // deliberate pile
+        await store.getState().refresh()
+        await sleep(300)
+        const btn = document.querySelector('[data-occ="tidy-canvas"]') as HTMLElement | null
+        if (!btn) throw new Error('tidy button missing')
+        btn.click()
+        const spread = await waitFor(() => {
+          const a = pinnedPosition(pid, roots[0].id)
+          const b = pinnedPosition(pid, roots[1].id)
+          return !!a && !!b && (Math.abs(a.x - b.x) > 100 || Math.abs(a.y - b.y) > 100)
+        }, 5000)
+        if (!spread) throw new Error('tidy did not separate the piled chats')
+        const stored = await waitFor(() => {
+          const raw = localStorage.getItem('occ-pins:' + pid)
+          if (!raw) return false
+          const a = JSON.parse(raw)[roots[0].id]
+          return !!a && (a.x !== 123 || a.y !== 456)
+        }, 6000)
+        if (!stored) throw new Error('tidy pins not persisted to localStorage')
+        await pass('T14 tidy-canvas (' + roots.length + ' chats re-packed, persisted)')
+      } catch (e) { await fail('T14 tidy-canvas', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/12: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/14: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)
     log(line + ' ··')
   }
 
-  const suite = params.get('suite') === 'ux' ? uxSuite : legacySuite
-  setTimeout(() => {
-    void suite().catch((e: unknown) => log('ERROR: ' + String(e).slice(0, 140)))
-  }, 3000)
+  // observation mode (bare ?auto=1) only exposes __occStore; a suite runs
+  // only when explicitly requested via &suite= (ux | legacy)
+  const which = params.get('suite')
+  const suite = which === 'ux' ? uxSuite : which === 'legacy' ? legacySuite : null
+  if (suite) {
+    setTimeout(() => {
+      void suite().catch((e: unknown) => log('ERROR: ' + String(e).slice(0, 140)))
+    }, 3000)
+  }
 }

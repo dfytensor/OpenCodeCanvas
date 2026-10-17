@@ -14,7 +14,7 @@ import { ChatNode } from './ChatNode'
 import { EventStream } from './EventStream'
 import { ContextMenu, type MenuEntry } from './ContextMenu'
 import { useOccStore } from '../store/occStore'
-import { layoutGraph, pinnedPosition, pinPosition } from '../lib/layout'
+import { layoutGraph, pinnedPosition, pinPosition, tidyLayout } from '../lib/layout'
 import type { GraphEdge, SessionNode } from '../../shared/types'
 
 const nodeTypes = { occ: OccNode, chat: ChatNode }
@@ -120,6 +120,14 @@ export function GraphCanvas(): React.ReactElement {
     }
   ]
 
+  // 整理: full re-arrange — chats and their subtrees flow into clean rows
+  const tidyCanvas = (): void => {
+    tidyLayout(graph)
+    void useOccStore.getState().refresh().then(() => {
+      setTimeout(() => rf.fitView({ padding: 0.2, duration: 500 }), 60)
+    })
+  }
+
   return (
     <div
       className="relative h-full w-full"
@@ -130,6 +138,16 @@ export function GraphCanvas(): React.ReactElement {
       }}
       onClick={() => setMenu(null)}
     >
+      {/* tidy: re-arrange the whole canvas into clean cluster rows */}
+      <button
+        data-occ="tidy-canvas"
+        onClick={tidyCanvas}
+        title="整理画布：聊天按簇重排（拖动可微调）"
+        className="absolute left-3 top-3 z-20 rounded-lg border border-canvas-border bg-canvas-node/90 px-2.5 py-1 text-[11px] text-gray-300 shadow-lg backdrop-blur transition-colors hover:bg-canvas-node hover:text-gray-100"
+      >
+        ⇲ 整理
+      </button>
+
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}

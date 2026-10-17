@@ -251,13 +251,12 @@ export const useOccStore = create<OccState>()((set, get) => ({
     try {
       const id = await window.electronAPI.occ.createChat()
       await s.refresh()
-      // cascade-pin top-bar-created chats so they never stack on (0,0)
+      // pin top-bar-created chats to the first free grid slot (never stacks)
       const g = get().graph
       if (g && s.project) {
-        const roots = Object.values(g.nodes).filter((n) => n.kind === 'root' && n.parents.length === 0)
-        const n = Math.max(0, roots.length - 1)
-        const { pinPosition } = await import('../lib/layout')
-        pinPosition(s.project.id, id, { x: 60 + (n % 6) * 90, y: 60 + (n % 6) * 80 })
+        const rootCount = Object.values(g.nodes).filter((n) => n.kind === 'root' && n.parents.length === 0).length
+        const { findFreeSlot, pinPosition } = await import('../lib/layout')
+        pinPosition(s.project.id, id, findFreeSlot(s.project.id, rootCount))
       }
       return id
     } catch (e) {

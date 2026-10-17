@@ -63,3 +63,30 @@
 
 ### 新增 IPC（首用三件套）
 `occ:onboardingState`（done/hasProvider/localEngineConfigured 探测）· `occ:completeOnboarding`（flag 持久化）· `occ:createDemoProject`（示例项目，支持自定义目录供测试）
+
+## 画布整理（T13–T14，2026-10-17 增补）
+
+用户实测反馈：多次自动化跑完后聊天窗口「叠在一起、不可移动、乱」。根因三条：
+
+1. **精确重叠**：`occStore.createChat` 用 `n % 6` 取模级联——第 7 个聊天与第 1 个坐标完全相同（86 chat ≈ 14 层堆叠）。
+2. **单列堆积**：`layoutGraph` 把所有无父（chat）节点放在 `x = 0`、`y = 0/150/300…` 的单列上。
+3. **移动不持久**：位置只存内存 Map——重启即丢，像是「拖不动」。
+
+修复：
+
+| 修复 | 实现 | 实测证据 |
+|---|---|---|
+| 级联改网格落位 | `findFreeSlot`：行优先网格扫描，与所有已有 pin 做重叠检测 | occ-gui-test 86 chat：pinned=86、overlappingPairs=0 |
+| 冷启动网格 | `layoutGraph` 无父节点走 `findFreeSlot`；子节点贴父节点右侧、右侧被占则下挂 | 重启后整图网格展开，无单列 |
+| 位置持久化 | localStorage `occ-pins:<projectId>` + 500ms 防抖落盘（上限 4000/项目） | 页面刷新后 161 pin 全部复原 |
+| 「⇲ 整理」按钮 | `tidyLayout`：聊天按簇（子树整体）右向分列、分块换行重排；`data-occ="tidy-canvas"` | cv-before/cv-after 截图；T14 |
+| 观察模式 | `?auto=1` 无 `&suite=` 时只暴露 `__occStore`，不再默认跑 legacy 套件 | occ-canvas-check.mjs 全流程走通 |
+
+新用例：
+
+| 用例 | 覆盖 | 实测证据 |
+|---|---|---|
+| T13 chat-slot no-overlap | 新建聊天与既有全部 root 聊天两两不重叠 | 90→91 chats，PASS |
+| T14 tidy-canvas | 手动叠放两个聊天 → 点整理 → 坐标分离 + localStorage 落盘 | 91 chats 重排、持久化，PASS |
+
+**完整 heavy 回归：UX-SUMMARY 14/14 全过**。首轮 13/14：T3 预算门在 `waitFinal` 4 分钟窗口内未见 final——dev 日志无报错、重跑 T3 PASS（toast/badge/focus 全真），判定为模型侧瞬时超时，非回归。观察模式截图 `cv-before.png` / `cv-after.png`（86 chat 项目）。
