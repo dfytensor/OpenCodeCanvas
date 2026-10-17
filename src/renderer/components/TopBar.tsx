@@ -155,6 +155,14 @@ export default function TopBar(): React.ReactElement {
         ⚙
       </button>
 
+      <button
+        className="rounded-md p-1 text-gray-500 transition-colors hover:text-gray-300"
+        onClick={() => useOccStore.getState().openOnboarding()}
+        title="使用引导"
+      >
+        ?
+      </button>
+
       {showSettings && (
         <div className="absolute right-3 top-12 z-50 max-h-[82vh] w-72 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-node p-3 shadow-xl">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500">Settings</p>

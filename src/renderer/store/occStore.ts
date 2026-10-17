@@ -46,6 +46,10 @@ interface OccState {
   /** live streaming partials keyed by worker nodeId (renderer-only, not persisted) */
   streams: Record<NodeID, { chatId?: NodeID; text: string }>
   wizardOpen: boolean
+  /** first-run guide overlay: step 0 workspace → 1 model → 2 first task */
+  onboardingOpen: boolean
+  onboardingStep: number
+  onboardingInfo: { hasProvider: boolean; localEngineConfigured: boolean } | null
   inspectCache: Record<NodeID, ContentManifest>
   /** one-shot signal: GraphCanvas pans to this node then clears it */
   focusNode: NodeID | null
@@ -82,6 +86,9 @@ interface OccState {
   apply: (nodeId: NodeID) => Promise<string>
   inspect: (nodeId: NodeID) => Promise<ContentManifest | null>
   setWizard: (open: boolean) => void
+  openOnboarding: () => void
+  setOnboardingStep: (n: number) => void
+  closeOnboarding: () => Promise<void>
   subscribe: () => () => void
 }
 
@@ -115,6 +122,9 @@ export const useOccStore = create<OccState>()((set, get) => ({
   chats: {},
   streams: {},
   wizardOpen: false,
+  onboardingOpen: false,
+  onboardingStep: 0,
+  onboardingInfo: null,
   inspectCache: {},
   focusNode: null,
 
@@ -151,6 +161,18 @@ export const useOccStore = create<OccState>()((set, get) => ({
         if (!get().project) set({ error: null })
       }
     } catch { /* first run or restore failed — empty state is fine */ }
+    // first-run guide: auto-open only when the persisted flag is absent.
+    // A restored project skips the workspace step (it is already satisfied).
+    try {
+      const ob = await window.electronAPI.occ.onboardingState()
+      if (!ob.done) {
+        set({
+          onboardingOpen: true,
+          onboardingStep: get().project ? 1 : 0,
+          onboardingInfo: { hasProvider: ob.hasProvider, localEngineConfigured: ob.localEngineConfigured }
+        })
+      }
+    } catch { /* the guide must never block startup */ }
   },
 
   refresh: async () => {
@@ -370,6 +392,23 @@ export const useOccStore = create<OccState>()((set, get) => ({
   },
 
   setWizard: (open) => set({ wizardOpen: open }),
+
+  openOnboarding: () => {
+    set({ onboardingOpen: true, onboardingStep: get().project ? 1 : 0 })
+    void window.electronAPI.occ
+      .onboardingState()
+      .then((ob) => set({ onboardingInfo: { hasProvider: ob.hasProvider, localEngineConfigured: ob.localEngineConfigured } }))
+      .catch(() => undefined)
+  },
+
+  setOnboardingStep: (n) => set({ onboardingStep: Math.max(0, Math.min(2, n)) }),
+
+  closeOnboarding: async () => {
+    set({ onboardingOpen: false })
+    try {
+      await window.electronAPI.occ.completeOnboarding()
+    } catch { /* flag is best-effort — closing the overlay must always work */ }
+  },
 
   subscribe: () => {
     return window.electronAPI.occ.onEvent((event) => {      if (event.type === 'pipeline.stream') {

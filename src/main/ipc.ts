@@ -134,6 +134,58 @@ export function registerIpc(): void {
     return readSettings()
   })
 
+  // ── first-run guide: state probe / completion flag / demo project ──
+  ipcMain.handle('occ:onboardingState', async () => {
+    const s = readSettings()
+    const { resolveAgentModelChain } = await import('./agent/providers')
+    let hasProvider = false
+    try {
+      hasProvider = resolveAgentModelChain(undefined).length > 0
+    } catch { /* provider config unreadable — treat as unconfigured */ }
+    return {
+      done: !!s.onboardingDone,
+      hasProvider,
+      localEngineConfigured: !!(s.localEngine?.exe && s.localEngine?.model),
+      lastProject: s.lastProject ?? null
+    }
+  })
+
+  ipcMain.handle('occ:completeOnboarding', async () => {
+    writeSettings({ onboardingDone: true })
+    return { ok: true }
+  })
+
+  ipcMain.handle('occ:createDemoProject', async (_e, arg?: { dir?: string }) => {
+    let dir = arg?.dir?.trim()
+    if (!dir) {
+      const { app } = await import('electron')
+      dir = join(app.getPath('documents'), 'OpenCodeCanvas-Demo')
+    }
+    const { mkdirSync } = await import('fs')
+    mkdirSync(dir, { recursive: true })
+    const readme = join(dir, 'README.md')
+    if (!existsSync(readme)) {
+      writeFileSync(
+        readme,
+        [
+          '# OpenCodeCanvas 示例项目',
+          '',
+          '这是一个空文件夹示例——每一次任务都会在这里产生真实文件。',
+          '',
+          '建议的第一个任务：',
+          '- 创建一个 hello.py，打印当前时间，运行它并给出输出证据',
+          '- 写一个计算器 calc.py，附 3 个测试并全部跑通',
+          '- 读一遍 README.md，把项目结构写进「结构」小节',
+          '',
+          '小提示：写入文件前会弹「允许 / 全部允许 / 拒绝」——那是请你把关，不是报错。',
+          ''
+        ].join('\n'),
+        'utf8'
+      )
+    }
+    return { dir }
+  })
+
   // ── acceptance report card: structured outcome for a chat ──
   ipcMain.handle('occ:chatStats', async (_e, chatId: NodeID) => {
     const rootDir = requireProject()

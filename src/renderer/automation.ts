@@ -222,25 +222,25 @@ export function initAutomation(): void {
         store.getState().graph?.nodes[chatId]?.status === 'completed'
       if (concluded) {
         await pass('T5 stop+retry (concluded-before-stop-landed)')
-        return
+      } else {
+        // the old pipeline may still be releasing the busy flag — retry clicks
+        // can be rejected, so loop until the chat visibly restarts
+        let restarted = false
+        for (let attempt = 0; attempt < 3 && !restarted; attempt++) {
+          const barThere = await waitFor(() => !!nodeButton(chatId, '↻ 重试'), 20_000)
+          if (!barThere) break
+          nodeButton(chatId, '↻ 重试')?.click()
+          restarted = await waitFor(
+            () => ['running', 'awaiting_input', 'completed'].includes(store.getState().graph?.nodes[chatId]?.status ?? ''),
+            20_000
+          )
+          if (!restarted) await sleep(8000)
+        }
+        await logHold('T5 restarted=' + restarted + ' status=' + (store.getState().graph?.nodes[chatId]?.status ?? '?'))
+        if (!restarted) throw new Error('pipeline did not restart after retry')
+        await pass('T5 stop+retry')
+        void waitFinal(chatId, 4 * 60_000).then((f) => { if (f) log('T5 retry final: ' + f.slice(0, 60)) })
       }
-      // the old pipeline may still be releasing the busy flag — retry clicks
-      // can be rejected, so loop until the chat visibly restarts
-      let restarted = false
-      for (let attempt = 0; attempt < 3 && !restarted; attempt++) {
-        const barThere = await waitFor(() => !!nodeButton(chatId, '↻ 重试'), 20_000)
-        if (!barThere) break
-        nodeButton(chatId, '↻ 重试')?.click()
-        restarted = await waitFor(
-          () => ['running', 'awaiting_input', 'completed'].includes(store.getState().graph?.nodes[chatId]?.status ?? ''),
-          20_000
-        )
-        if (!restarted) await sleep(8000)
-      }
-      await logHold('T5 restarted=' + restarted + ' status=' + (store.getState().graph?.nodes[chatId]?.status ?? '?'))
-      if (!restarted) throw new Error('pipeline did not restart after retry')
-      await pass('T5 stop+retry')
-      void waitFinal(chatId, 4 * 60_000).then((f) => { if (f) log('T5 retry final: ' + f.slice(0, 60)) })
 
     } catch (e) { await fail('T5 stop+retry', String(e)) }
     }
@@ -289,8 +289,75 @@ export function initAutomation(): void {
         await pass('T9 cascade-positions (chats=' + roots.length + ', distinctPins=' + distinct + ')')
       } catch (e) { await fail('T9 cascade-positions', String(e)) }
 
+      // T10: first-run guide — auto-opens only when the persisted flag is
+      // absent (fresh OCC_SETTINGS_DIR exercises that branch); skip must
+      // close it AND persist the flag so it never auto-opens again
+      try {
+        const ob0 = await window.electronAPI.occ.onboardingState()
+        const shown = await waitFor(() => !!document.querySelector('[data-occ="onboarding"]'), 6000)
+        if (!ob0.done) {
+          if (!shown) throw new Error('flag unset but guide did not auto-open')
+          const skip = document.querySelector('[data-occ="onboarding-skip"]') as HTMLElement | null
+          if (!skip) throw new Error('skip control missing')
+          skip.click()
+          const closed = await waitFor(() => !document.querySelector('[data-occ="onboarding"]'), 5000)
+          const ob1 = await window.electronAPI.occ.onboardingState()
+          if (!closed || !ob1.done) throw new Error('skip did not close/persist (closed=' + closed + ' done=' + ob1.done + ')')
+          await pass('T10 first-run-guide auto-open+skip-persist')
+        } else {
+          if (shown) throw new Error('flag set but guide auto-opened (must be suppressed)')
+          await pass('T10 first-run-guide flag-suppresses-auto-open')
+        }
+      } catch (e) { await fail('T10 first-run-guide', String(e)) }
+
+      // T11: demo project + canvas hero — the zero-friction first-task path.
+      // A fresh timestamped probe dir keeps the run deterministic (the real
+      // Documents demo project persists across runs by design).
+      try {
+        const def = await window.electronAPI.occ.createDemoProject()
+        if (!def.dir) throw new Error('createDemoProject returned no dir')
+        const probeDir = 'F:\\occ-gui-test\\hero-' + Date.now()
+        await window.electronAPI.occ.createDemoProject({ dir: probeDir })
+        await store.getState().openProject(probeDir)
+        const proj = store.getState().project
+        if (!proj || proj.rootDir !== probeDir) throw new Error('probe project not open: ' + (proj?.rootDir ?? 'null'))
+        const hero = await waitFor(() => !!document.querySelector('[data-occ="canvas-hero"]'), 8000)
+        if (!hero) throw new Error('canvas hero not visible on an empty project')
+        const chips = Array.from(document.querySelectorAll('[data-occ="canvas-hero-chip"]')) as HTMLElement[]
+        if (chips.length < 3) throw new Error('goal chips missing (found ' + chips.length + ')')
+        chips[1].click()
+        ;(document.querySelector('[data-occ="canvas-hero-start"]') as HTMLElement | null)?.click()
+        const chatStarted = await waitFor(() => {
+          const roots = Object.values(store.getState().graph?.nodes ?? {}).filter((n) => n.kind === 'root' && n.parents.length === 0)
+          return roots.some((r) => (store.getState().chats[r.id] ?? []).some((e) => e.role === 'user'))
+        }, 20_000)
+        if (!chatStarted) throw new Error('hero start did not create a chat with the goal')
+        await pass('T11 demo-project+hero (default=' + def.dir.split('\\').pop() + ')')
+      } catch (e) { await fail('T11 demo-project+hero', String(e)) }
+
+      // T12: guide steps walk (manual open) — workspace → model → goal render,
+      // skip closes and the flag stays persisted
+      try {
+        store.setState({ onboardingOpen: true, onboardingStep: 0 })
+        if (!(await waitFor(() => !!document.querySelector('[data-occ="onboarding"]'), 5000))) throw new Error('overlay did not open')
+        if (!document.querySelector('[data-occ="onboarding-open-folder"]')) throw new Error('workspace step controls missing')
+        ;(document.querySelector('[data-occ="onboarding-next"]') as HTMLElement | null)?.click()
+        const stepModel = await waitFor(() => !!document.querySelector('[data-occ="onboarding-provider-key"]') || document.body.innerText.includes('已检测到可用'), 5000)
+        if (!stepModel) throw new Error('model step did not render')
+        ;(document.querySelector('[data-occ="onboarding-next"]') as HTMLElement | null)?.click()
+        const stepGoal = await waitFor(() => !!document.querySelector('[data-occ="onboarding-start"]'), 5000)
+        if (!stepGoal) throw new Error('goal step did not render')
+        ;(document.querySelector('[data-occ="onboarding-skip"]') as HTMLElement | null)?.click()
+        const closed = await waitFor(() => !document.querySelector('[data-occ="onboarding"]'), 5000)
+        const ob = await window.electronAPI.occ.onboardingState()
+        if (!closed || !ob.done) throw new Error('skip did not close/persist (closed=' + closed + ' done=' + ob.done + ')')
+        await pass('T12 guide-steps (provider=' + (ob.hasProvider ? 'ready' : 'unset') + ')')
+      } catch (e) { await fail('T12 guide-steps', String(e)) }
+      // restore the shared test project so repeated runs stay deterministic
+      try { await store.getState().openProject('F:\\occ-gui-test') } catch { /* best-effort */ }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/9: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/12: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)

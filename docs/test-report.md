@@ -42,3 +42,24 @@
 - Windows 单平台实测；macOS/Linux 未验证
 - SWE-bench 需 Docker，本机未跑
 - 零真实外部用户
+
+## 首用体验套件（T10–T12，2026-10-14 增补）
+
+| 用例 | 覆盖 | 实测证据 |
+|---|---|---|
+| T10 first-run-guide | 无 flag 自动弹出（全新区）/ flag 置位后抑制（复跑区）| 两次运行两分支各自 PASS；skip 点击后 `onboardingState().done === true` 持久化 |
+| T11 demo-project+hero | 示例项目创建（默认 Documents 路径 + 探针临时目录）+ 空项目 Hero 可见 + chip 发送产生聊天 | `dir=OpenCodeCanvas-Demo`；3 chips；hero start 后 user 消息落库 |
+| T12 guide-steps | 三步骤渲染走查（工作区→模型→目标）+ skip 持久化 | provider=ready 分支；overlay 关闭且 done 持久 |
+
+**完整 heavy 回归：UX-SUMMARY 12/12 全过**（T1–T9 原套件 + T10–T12），含预算门/拒绝/停止重试路径。
+
+### 附带修复（本套件逼出来的真 bug）
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| heavy 跑 T5 后套件静默终止 | T5「完成先于停止」分支里的 `return` 退出的是整个 uxSuite（不是 T5 块）| 改为 if/else 分支结构 |
+| OCC_CDP_PORT 开了端口不通 | `appendSwitch` 写在 `whenReady` 内——浏览器进程已启动，switch 被静默忽略 | 移到模块顶层（ready 前）|
+| 被遮挡窗口跑套件疑似冻结 | Chromium 后台节流把 `setTimeout` 降到 ≥1s/次 | 自动化模式下 `backgroundThrottling: false` |
+
+### 新增 IPC（首用三件套）
+`occ:onboardingState`（done/hasProvider/localEngineConfigured 探测）· `occ:completeOnboarding`（flag 持久化）· `occ:createDemoProject`（示例项目，支持自定义目录供测试）

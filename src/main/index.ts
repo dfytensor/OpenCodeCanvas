@@ -10,6 +10,12 @@ if (bootSettings.openrouterKey) process.env.OPENROUTER_API_KEY = bootSettings.op
 
 let mainWindow: BrowserWindow | null = null
 
+// GUI-automation hook (dev only): CDP must be enabled BEFORE the browser
+// process boots — appendSwitch inside whenReady() is silently ignored
+if (process.env.OCC_CDP_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.OCC_CDP_PORT)
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1560,
@@ -24,7 +30,10 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // GUI automation must keep running when the window is occluded —
+      // Chromium's background timer throttling freezes scripted suites
+      backgroundThrottling: process.env.OCC_AUTOMATION !== '1'
     }
   })
 
@@ -73,10 +82,6 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // GUI-automation hook (dev only): enable CDP for external driving/tests
-  if (process.env.OCC_CDP_PORT) {
-    app.commandLine.appendSwitch('remote-debugging-port', process.env.OCC_CDP_PORT)
-  }
   registerIpc()
   createWindow()
 

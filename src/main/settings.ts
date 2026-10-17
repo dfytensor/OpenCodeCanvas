@@ -4,6 +4,8 @@ import { join } from 'path'
 export interface OccSettings {
   openrouterKey?: string
   lastProject?: string
+  /** first-run guide completed (or explicitly skipped) — suppresses auto-open */
+  onboardingDone?: boolean
   /** local decision engine (llama-server) — set once via the settings UI */
   localEngine?: {
     exe?: string

@@ -366,6 +366,9 @@ export interface ElectronAPI {
     setProviderKey: (providerId: string, key: string, baseURL?: string) => Promise<{ ok: boolean }>
     testProvider: (providerId: string) => Promise<{ ok: boolean; ms?: number; model?: string; error?: string }>
     getSettings: () => Promise<{ openrouterKey?: string; lastProject?: string; localEngine?: { exe?: string; model?: string; port?: number } }>
+    onboardingState: () => Promise<{ done: boolean; hasProvider: boolean; localEngineConfigured: boolean; lastProject: string | null }>
+    completeOnboarding: () => Promise<{ ok: boolean }>
+    createDemoProject: (arg?: { dir?: string }) => Promise<{ dir: string }>
     openProject: (rootDir: string) => Promise<{ project: Project; graph: GraphDoc } | null>
     closeProject: () => Promise<void>
     getGraph: () => Promise<GraphDoc | null>
