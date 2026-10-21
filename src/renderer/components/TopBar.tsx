@@ -14,6 +14,7 @@ export default function TopBar(): React.ReactElement {
   const openProject = useOccStore((s) => s.openProject)
   const closeProject = useOccStore((s) => s.closeProject)
   const createChat = useOccStore((s) => s.createChat)
+  const onboardingInfo = useOccStore((s) => s.onboardingInfo)
   const sidebarOpen = useOccStore((s) => s.sidebarOpen)
   const setSidebar = useOccStore((s) => s.setSidebar)
   const [showSettings, setShowSettings] = useState(false)
@@ -84,6 +85,20 @@ export default function TopBar(): React.ReactElement {
           {/* running indicator */}
           <RunningBadge />
           <AwaitingBadge />
+
+          {project && onboardingInfo && !onboardingInfo.hasProvider && (
+            <button
+              data-occ="need-model-chip"
+              onClick={() => {
+                useOccStore.getState().openOnboarding()
+                useOccStore.getState().setOnboardingStep(1)
+              }}
+              title="未配置模型——点击配置 API Key 或本地引擎"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300 transition-colors hover:bg-amber-500/20"
+            >
+              ⚙ 未配置模型
+            </button>
+          )}
 
           <button
             className="rounded-md border border-canvas-border px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-canvas-accent hover:text-canvas-accent"

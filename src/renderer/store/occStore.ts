@@ -61,6 +61,8 @@ interface OccState {
    *  projects stay readable; auto-flips on when focusing a dormant chat */
   showDormant: boolean
   setShowDormant: (show: boolean) => void
+  /** re-probe provider availability (after saving a key / starting local engine) */
+  refreshOnboardingInfo: () => void
   /** diff viewer: node whose workspace diff is on screen */
   diffNode: NodeID | null
   diffText: string
@@ -173,12 +175,11 @@ export const useOccStore = create<OccState>()((set, get) => ({
     // A restored project skips the workspace step (it is already satisfied).
     try {
       const ob = await window.electronAPI.occ.onboardingState()
+      // always keep provider availability known — the hero / top bar guards
+      // depend on it; unknown must never be mistaken for "no model"
+      set({ onboardingInfo: { hasProvider: ob.hasProvider, localEngineConfigured: ob.localEngineConfigured } })
       if (!ob.done) {
-        set({
-          onboardingOpen: true,
-          onboardingStep: get().project ? 1 : 0,
-          onboardingInfo: { hasProvider: ob.hasProvider, localEngineConfigured: ob.localEngineConfigured }
-        })
+        set({ onboardingOpen: true, onboardingStep: get().project ? 1 : 0 })
       }
     } catch { /* the guide must never block startup */ }
   },
@@ -409,12 +410,16 @@ export const useOccStore = create<OccState>()((set, get) => ({
 
   setWizard: (open) => set({ wizardOpen: open }),
 
-  openOnboarding: () => {
-    set({ onboardingOpen: true, onboardingStep: get().project ? 1 : 0 })
+  refreshOnboardingInfo: () => {
     void window.electronAPI.occ
       .onboardingState()
       .then((ob) => set({ onboardingInfo: { hasProvider: ob.hasProvider, localEngineConfigured: ob.localEngineConfigured } }))
       .catch(() => undefined)
+  },
+
+  openOnboarding: () => {
+    set({ onboardingOpen: true, onboardingStep: get().project ? 1 : 0 })
+    get().refreshOnboardingInfo()
   },
 
   setOnboardingStep: (n) => set({ onboardingStep: Math.max(0, Math.min(2, n)) }),

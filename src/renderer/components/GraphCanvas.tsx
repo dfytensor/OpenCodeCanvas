@@ -78,12 +78,26 @@ export function GraphCanvas(): React.ReactElement {
     )
     const newest = roots.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     const target = newest.find((n) => n.status === 'running' || n.status === 'awaiting_input') ?? newest[0]
-    const t = setTimeout(() => {
+    // nodes may not be registered with React Flow yet right after mount —
+    // retry before falling back to fitView (which would show the 100+ map wall)
+    let tries = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const place = (): void => {
       const node = target ? rf.getNode(target.id) : undefined
-      if (node) rf.setCenter(node.position.x + 190, node.position.y + 150, { zoom: 0.85, duration: 0 })
-      else if (Object.keys(graph.nodes).length > 0) rf.fitView({ padding: 0.3 })
-    }, 150)
-    return () => clearTimeout(t)
+      if (node) {
+        rf.setCenter(node.position.x + 190, node.position.y + 150, { zoom: 0.85, duration: 0 })
+        return
+      }
+      if (tries++ < 14) {
+        timer = setTimeout(place, 150)
+        return
+      }
+      if (Object.keys(graph.nodes).length > 0) rf.fitView({ padding: 0.3 })
+    }
+    timer = setTimeout(place, 120)
+    return () => {
+      if (timer) clearTimeout(timer)
+    }
     // once per project open; graph identity changes must not move the camera
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, rf])

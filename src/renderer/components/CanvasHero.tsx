@@ -17,6 +17,9 @@ export default function CanvasHero(): React.ReactElement | null {
   const openProject = useOccStore((s) => s.openProject)
   const createChat = useOccStore((s) => s.createChat)
   const sendChat = useOccStore((s) => s.sendChat)
+  const info = useOccStore((s) => s.onboardingInfo)
+  // unknown (null, pre-probe) must not be treated as "no model"
+  const modelReady = !info || !!info.hasProvider
 
   const [busy, setBusy] = useState(false)
   const [goal, setGoal] = useState(GOALS[0])
@@ -105,13 +108,34 @@ export default function CanvasHero(): React.ReactElement | null {
                 </button>
               ))}
             </div>
-            <button
-              data-occ="canvas-hero-start"
-              onClick={() => void start()}
-              className="mt-4 w-full rounded-lg bg-canvas-accent py-2 text-xs font-medium text-white shadow-sm transition-all hover:brightness-110 active:scale-[0.99]"
-            >
-              🚀 新建聊天并开始
-            </button>
+            {modelReady ? (
+              <button
+                data-occ="canvas-hero-start"
+                onClick={() => void start()}
+                className="mt-4 w-full rounded-lg bg-canvas-accent py-2 text-xs font-medium text-white shadow-sm transition-all hover:brightness-110 active:scale-[0.99]"
+              >
+                🚀 新建聊天并开始
+              </button>
+            ) : (
+              <>
+                <p
+                  data-occ="hero-need-model"
+                  className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-amber-300"
+                >
+                  还没有可用模型——先配置一个 API Key（或本地引擎），再开始任务。
+                </p>
+                <button
+                  data-occ="hero-configure-model"
+                  onClick={() => {
+                    useOccStore.getState().openOnboarding()
+                    useOccStore.getState().setOnboardingStep(1)
+                  }}
+                  className="mt-2 w-full rounded-lg bg-canvas-accent py-2 text-xs font-medium text-white shadow-sm transition-all hover:brightness-110 active:scale-[0.99]"
+                >
+                  ⚙ 去配置模型
+                </button>
+              </>
+            )}
             <p className="mt-2 text-[10px] text-gray-500">写入文件前会弹「允许 / 拒绝」——那是请你把关，不是报错。</p>
           </>
         )}

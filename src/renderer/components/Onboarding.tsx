@@ -31,6 +31,7 @@ export default function Onboarding(): React.ReactElement | null {
   const [ready, setReady] = useState(false)
   const [localMsg, setLocalMsg] = useState('')
   const [goal, setGoal] = useState(GOALS[0])
+  const [needModel, setNeedModel] = useState(false)
 
   useEffect(() => { setReady(info?.hasProvider ?? false) }, [info])
 
@@ -70,6 +71,8 @@ export default function Onboarding(): React.ReactElement | null {
       const r = await window.electronAPI.occ.testProvider(provId)
       if (r.ok) {
         setReady(true)
+        setNeedModel(false)
+        useOccStore.getState().refreshOnboardingInfo()
         setTestMsg(`✅ 连通（${r.model}，${r.ms}ms）`)
       } else {
         setReady(false)
@@ -84,6 +87,7 @@ export default function Onboarding(): React.ReactElement | null {
     setLocalMsg('启动中…（首次加载模型可能要十几秒）')
     try {
       const r = await window.electronAPI.occ.localJevStart()
+      if (r.ok) useOccStore.getState().refreshOnboardingInfo()
       setLocalMsg(r.ok ? '✅ 本地引擎已就绪（Jev 决策 $0）' : `❌ ${r.error ?? '启动失败'}`)
     } catch (e) {
       setLocalMsg(`❌ ${String(e).slice(0, 120)}`)
@@ -93,6 +97,12 @@ export default function Onboarding(): React.ReactElement | null {
   const finish = async (): Promise<void> => {
     if (!project) {
       setStep(0)
+      return
+    }
+    // no model yet → sending now would start a doomed run; guide back to step ②
+    if (!ready) {
+      setNeedModel(true)
+      setStep(1)
       return
     }
     setBusy(true)
@@ -160,6 +170,14 @@ export default function Onboarding(): React.ReactElement | null {
         {step === 1 && (
           <>
             <h2 className="text-sm font-semibold text-white">② 配置模型</h2>
+            {needModel && (
+              <p
+                data-occ="onboarding-need-model"
+                className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300"
+              >
+                先配置模型（保存 API Key 或启动本地引擎），再开始第一个任务。
+              </p>
+            )}
             {ready ? (
               <p className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-2 text-[11px] text-emerald-300">
                 ✅ 已检测到可用的模型配置——直接下一步。

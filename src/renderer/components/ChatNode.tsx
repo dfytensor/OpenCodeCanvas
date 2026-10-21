@@ -163,8 +163,20 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const lastEntry = log[log.length - 1]
   const showTyping = working && lastEntry?.role !== 'final'
   const lastText = lastEntry?.text ?? ''
-  const isPermAsk = awaiting && /权限请求/.test(lastText)
-  const isBudgetAsk = awaiting && /预算/.test(lastText)
+  // pending gate = the newest UNRESOLVED ask. Variant competition interleaves
+  // three workers' events, so the ask is often not the last entry — a
+  // last-entry check made the reply buttons vanish and deadlocked the chat.
+  const pendingGate = useMemo(() => {
+    for (let i = log.length - 1; i >= 0 && i >= log.length - 30; i--) {
+      const t = log[i].text
+      if (/(已允许执行。|已允许，且本聊天对该类操作免问。|已拒绝该操作。|已确认 — 继续执行本轮|已按你的要求取消|已确认放弃本轮)/.test(t)) return null
+      if (/权限请求/.test(t)) return 'perm' as const
+      if (/预算提醒|预算确认/.test(t)) return 'budget' as const
+    }
+    return null
+  }, [log])
+  const isPermAsk = awaiting && (pendingGate === 'perm' || /权限请求/.test(lastText))
+  const isBudgetAsk = awaiting && (pendingGate === 'budget' || /预算/.test(lastText))
   const gateReplies = isBudgetAsk ? ['继续', '取消'] : ['允许', '全部允许', '拒绝']
 
   // live clock: elapsed run time + freshness of the last event. Ticks only

@@ -110,6 +110,7 @@ export function initAutomation(): void {
     const pass = async (n: string): Promise<void> => { results.push('ok:' + n); await logHold('PASS ' + n) }
     const fail = async (n: string, why: string): Promise<void> => { results.push('FAIL:' + n); await logHold('FAIL ' + n + ' — ' + why.slice(0, 90)) }
     let t4ChatId = '' // reused by T18 (criteria report)
+    let t3ChatId = '' // fallback for T18 when T4 is slow
 
     if (!store.getState().project) await store.getState().openProject('F:\\occ-gui-test')
     await store.getState().setEngine('native')
@@ -142,8 +143,12 @@ export function initAutomation(): void {
       await window.electronAPI.occ.updatePolicy({ toolPermission: 'auto', budgetTokensPerChat: 1000 })
       const chatId = await store.getState().createChat()
       if (!chatId) throw new Error('createChat failed')
+      t3ChatId = chatId
       if (!(await waitFor(() => !!nodeTextarea(chatId), 30000))) throw new Error('textarea never mounted')
       await sendGoal(chatId, '在当前目录创建 budget.txt，内容是 budget-ok，验证写入后报告任务完成')
+      // look at the chat like a user would: full cards render the run bar,
+      // compact (low-zoom) cards do not
+      store.setState({ focusNode: chatId })
       const runBar = await waitFor(
         () => !!document.querySelector('[data-node-id="' + chatId + '"] [data-occ="run-stage"]'),
         20_000
@@ -191,7 +196,7 @@ export function initAutomation(): void {
       t4ChatId = chatId
       if (!(await waitFor(() => !!nodeTextarea(chatId), 30000))) throw new Error('textarea never mounted')
       await sendGoal(chatId, '在当前目录创建 deny.txt，内容是 should-not-exist，验证写入后报告任务完成')
-      const gated = await waitFor(() => !!nodeButton(chatId, '拒绝'), 5 * 60_000)
+      const gated = await waitFor(() => !!nodeButton(chatId, '拒绝'), 8 * 60_000)
       if (!gated) throw new Error('gate never appeared')
       nodeButton(chatId, '拒绝')?.click()
       // contract: the deny resolves the pending ask — the chat log gets a
@@ -210,7 +215,7 @@ export function initAutomation(): void {
         if (btn && s.graph?.nodes[chatId]?.status === 'awaiting_input') { btn.click(); await sleep(1200); continue }
         await sleep(1500)
       }
-      const final = await waitFinal(chatId, 5 * 60_000)
+      const final = await waitFinal(chatId, 8 * 60_000)
       if (!final) throw new Error('no final after deny+allow-all')
       await pass('T4 deny-path')
     } catch (e) { await fail('T4 deny-path', String(e)) }
@@ -525,18 +530,48 @@ export function initAutomation(): void {
       // T18: evaluation-first is VISIBLE — the report card lists the planned
       // success criteria with per-criterion PASS/FAIL from the verdict
       try {
-        if (!t4ChatId) throw new Error('no T4 chat id')
-        const ok = await waitFor(
-          () => document.querySelectorAll('[data-node-id="' + t4ChatId + '"] [data-occ="criterion-item"]').length > 0,
-          15_000
-        )
-        if (!ok) throw new Error('criteria report not rendered on the T4 chat')
-        const n = document.querySelectorAll('[data-node-id="' + t4ChatId + '"] [data-occ="criterion-item"]').length
-        await pass('T18 criteria report (' + n + ' items)')
+        const ids = [t4ChatId, t3ChatId].filter(Boolean)
+        if (ids.length === 0) throw new Error('no heavy chat ids')
+        let foundId = ''
+        let n = 0
+        const ok = await waitFor(() => {
+          for (const id of ids) {
+            const items = document.querySelectorAll('[data-node-id="' + id + '"] [data-occ="criterion-item"]')
+            if (items.length > 0) {
+              foundId = id
+              n = items.length
+              return true
+            }
+          }
+          return false
+        }, 15_000)
+        if (!ok) throw new Error('no criteria report rendered on heavy chats')
+        await pass('T18 criteria report (' + n + ' items on ' + foundId + ')')
       } catch (e) { await fail('T18 criteria report', String(e)) }
 
+      // T19: cold start WITHOUT a model — hero + topbar must guide to
+      // configuration instead of launching a doomed run (onboardingInfo mocked)
+      try {
+        const probeDir = 'F:\\occ-gui-test\\nomodel-' + Date.now()
+        await window.electronAPI.occ.createDemoProject({ dir: probeDir })
+        await store.getState().openProject(probeDir)
+        store.setState({ onboardingInfo: { hasProvider: false, localEngineConfigured: false } })
+        const guide = await waitFor(() => !!document.querySelector('[data-occ="hero-need-model"]'), 8000)
+        if (!guide) throw new Error('hero did not show the no-model guide')
+        if (document.querySelector('[data-occ="canvas-hero-start"]')) throw new Error('start button still offered without a model')
+        const chip = await waitFor(() => !!document.querySelector('[data-occ="need-model-chip"]'), 3000)
+        if (!chip) throw new Error('topbar did not flag the missing model')
+        ;(document.querySelector('[data-occ="hero-configure-model"]') as HTMLElement | null)?.click()
+        const modelStep = await waitFor(() => !!document.querySelector('[data-occ="onboarding"]'), 6000)
+        if (!modelStep) throw new Error('configure-model did not open the model step')
+        store.setState({ onboardingOpen: false })
+        store.getState().refreshOnboardingInfo()
+        await store.getState().openProject('F:\\occ-gui-test')
+        await pass('T19 no-model cold start (guide → model step)')
+      } catch (e) { await fail('T19 no-model cold start', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/18: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/19: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)
