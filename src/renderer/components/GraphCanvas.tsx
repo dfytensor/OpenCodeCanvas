@@ -40,11 +40,19 @@ export function GraphCanvas(): React.ReactElement {
   const prevCount = useRef(0)
   const menuPos = useRef({ x: 400, y: 300 })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const showDormant = useOccStore((s) => s.showDormant)
+  const setShowDormant = useOccStore((s) => s.setShowDormant)
 
   const { flowNodes, flowEdges } = useMemo(() => {
     if (!graph) return { flowNodes: [] as Node[], flowEdges: [] as Edge[] }
     const positions = layoutGraph(graph)
-    const flowNodes: Node[] = Object.values(graph.nodes).map((n: SessionNode) => {
+    // long-age projects: frozen/archived chats leave the canvas by default;
+    // the 📦 toggle (or focusing one from the sidebar) brings them back
+    const visible = Object.values(graph.nodes).filter(
+      (n) => showDormant || (n.status !== 'frozen' && n.status !== 'archived')
+    )
+    const visibleIds = new Set(visible.map((n) => n.id))
+    const flowNodes: Node[] = visible.map((n: SessionNode) => {
       const pinned = pinnedPosition(graph.projectId, n.id) ?? positions.get(n.id)!
       pinPosition(graph.projectId, n.id, pinned)
       return {
@@ -54,9 +62,11 @@ export function GraphCanvas(): React.ReactElement {
         data: { node: n }
       }
     })
-    const flowEdges: Edge[] = graph.edges.map(edgeStyle)
+    const flowEdges: Edge[] = graph.edges
+      .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+      .map(edgeStyle)
     return { flowNodes, flowEdges }
-  }, [graph])
+  }, [graph, showDormant])
 
   useEffect(() => {
     if (!graph) return
@@ -79,9 +89,18 @@ export function GraphCanvas(): React.ReactElement {
         zoom: Math.max(rf.getZoom(), 0.85),
         duration: 500
       })
+      useOccStore.setState({ focusNode: null })
+      return
+    }
+    // the target may be hidden because it is dormant — reveal the layer and
+    // retry on the next pass instead of silently doing nothing
+    const target = graph?.nodes[focusNode]
+    if (!showDormant && target && (target.status === 'frozen' || target.status === 'archived')) {
+      useOccStore.getState().setShowDormant(true)
+      return
     }
     useOccStore.setState({ focusNode: null })
-  }, [focusNode, rf])
+  }, [focusNode, rf, showDormant, graph])
 
   if (!graph || !project) {
     return (
@@ -96,6 +115,9 @@ export function GraphCanvas(): React.ReactElement {
 
   const running = Object.values(graph.nodes).filter(
     (n) => n.status === 'running' || n.status === 'awaiting_input'
+  ).length
+  const dormantCount = Object.values(graph.nodes).filter(
+    (n) => n.status === 'frozen' || n.status === 'archived'
   ).length
 
   const totalTok = Object.values(graph.nodes).reduce(
@@ -138,15 +160,29 @@ export function GraphCanvas(): React.ReactElement {
       }}
       onClick={() => setMenu(null)}
     >
-      {/* tidy: re-arrange the whole canvas into clean cluster rows */}
-      <button
-        data-occ="tidy-canvas"
-        onClick={tidyCanvas}
-        title="整理画布：聊天按簇重排（拖动可微调）"
-        className="absolute left-3 top-3 z-20 rounded-lg border border-canvas-border bg-canvas-node/90 px-2.5 py-1 text-[11px] text-gray-300 shadow-lg backdrop-blur transition-colors hover:bg-canvas-node hover:text-gray-100"
-      >
-        ⇲ 整理
-      </button>
+      {/* canvas tools: tidy + dormant-layer toggle */}
+      <div className="absolute left-3 top-3 z-20 flex gap-1.5">
+        <button
+          data-occ="tidy-canvas"
+          onClick={tidyCanvas}
+          title="整理画布：聊天按簇重排（拖动可微调）"
+          className="rounded-lg border border-canvas-border bg-canvas-node/90 px-2.5 py-1 text-[11px] text-gray-300 shadow-lg backdrop-blur transition-colors hover:bg-canvas-node hover:text-gray-100"
+        >
+          ⇲ 整理
+        </button>
+        <button
+          data-occ="show-dormant"
+          onClick={() => setShowDormant(!showDormant)}
+          title={showDormant ? '隐藏已冻结/已归档的聊天' : '显示已冻结/已归档的聊天'}
+          className={`rounded-lg border px-2.5 py-1 text-[11px] shadow-lg backdrop-blur transition-colors ${
+            showDormant
+              ? 'border-canvas-accent/50 bg-canvas-accent/15 text-canvas-accent'
+              : 'border-canvas-border bg-canvas-node/90 text-gray-400 hover:text-gray-100'
+          }`}
+        >
+          📦 已收纳{dormantCount > 0 ? ' ' + dormantCount : ''}
+        </button>
+      </div>
 
       <ReactFlow
         nodes={flowNodes}

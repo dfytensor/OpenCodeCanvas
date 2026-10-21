@@ -457,8 +457,46 @@ export function initAutomation(): void {
         await pass('T15 all-Chinese chrome (settings + pane menu)')
       } catch (e) { await fail('T15 all-Chinese chrome', String(e)) }
 
+      // T16: long-age dormancy — freezing removes a chat from the canvas by
+      // default; the 已收纳 tab lists it, focusing reveals it, unfreeze restores
+      try {
+        store.setState({ sidebarOpen: true })
+        await sleep(400)
+        const g = store.getState().graph!
+        const victim = Object.values(g.nodes)
+          .filter((n) => n.kind === 'root' && n.parents.length === 0 && n.status === 'completed')
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
+        if (!victim) throw new Error('no completed chat to freeze')
+        await store.getState().freeze(victim.id)
+        // canvas-scoped check: the sidebar list item also carries data-node-id
+        const onCanvas = (): boolean => !!document.querySelector('.react-flow [data-node-id="' + victim.id + '"]')
+        const hidden = await waitFor(() => !onCanvas(), 8000)
+        if (!hidden) throw new Error('frozen chat still on canvas')
+        ;(document.querySelector('[data-occ="sidebar-filter-dormant"]') as HTMLElement | null)?.click()
+        const listed = await waitFor(
+          () => !!document.querySelector('[data-occ="chat-list-item"][data-node-id="' + victim.id + '"]'),
+          5000
+        )
+        if (!listed) throw new Error('frozen chat missing from 已收纳 list')
+        ;(document.querySelector('[data-occ="chat-list-item"][data-node-id="' + victim.id + '"]') as HTMLElement | null)?.click()
+        const revealed = await waitFor(() => onCanvas(), 8000)
+        if (!revealed) throw new Error('focus did not reveal the frozen chat')
+        ;(document.querySelector('[data-occ="show-dormant"]') as HTMLElement | null)?.click()
+        const hiddenAgain = await waitFor(() => !onCanvas(), 8000)
+        if (!hiddenAgain) throw new Error('dormant toggle did not hide the chat again')
+        await store.getState().unfreeze(victim.id)
+        const back = await waitFor(() => onCanvas(), 8000)
+        if (!back) throw new Error('unfreeze did not restore the chat')
+        const doneChip = document.querySelector('[data-occ="sidebar-filter-done"]')?.textContent ?? ''
+        if (!doneChip.includes('已完成')) throw new Error('no 已完成 filter chip')
+        const batchBtn = document.querySelector('[data-occ="freeze-completed"]')
+        if (!batchBtn) throw new Error('batch 收纳已完成 button missing')
+        ;(document.querySelector('[data-occ="sidebar-filter-all"]') as HTMLElement | null)?.click()
+        await pass('T16 dormant chats (hide/reveal/unfreeze, filters, batch button)')
+      } catch (e) { await fail('T16 dormant chats', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/15: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/16: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)

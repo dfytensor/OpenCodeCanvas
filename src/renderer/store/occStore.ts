@@ -57,6 +57,10 @@ interface OccState {
   /** collapsible chat list sidebar */
   sidebarOpen: boolean
   setSidebar: (open: boolean) => void
+  /** canvas: show frozen/archived chats — hidden by default so long-age
+   *  projects stay readable; auto-flips on when focusing a dormant chat */
+  showDormant: boolean
+  setShowDormant: (show: boolean) => void
   /** diff viewer: node whose workspace diff is on screen */
   diffNode: NodeID | null
   diffText: string
@@ -82,6 +86,8 @@ interface OccState {
   abort: (nodeId: NodeID) => Promise<void>
   freeze: (nodeId: NodeID) => Promise<void>
   unfreeze: (nodeId: NodeID) => Promise<void>
+  /** batch freeze (one refresh): the long-age "收纳已完成" path */
+  freezeMany: (nodeIds: NodeID[]) => Promise<void>
   archive: (nodeId: NodeID) => Promise<void>
   apply: (nodeId: NodeID) => Promise<string>
   inspect: (nodeId: NodeID) => Promise<ContentManifest | null>
@@ -132,6 +138,8 @@ export const useOccStore = create<OccState>()((set, get) => ({
 
   sidebarOpen: false,
   setSidebar: (open) => set({ sidebarOpen: open }),
+  showDormant: false,
+  setShowDormant: (show) => set({ showDormant: show }),
 
   diffNode: null,
   diffText: '',
@@ -344,6 +352,15 @@ export const useOccStore = create<OccState>()((set, get) => ({
   unfreeze: async (nodeId) => {
     try {
       await window.electronAPI.occ.unfreezeNode(nodeId)
+      await get().refresh()
+    } catch (e) {
+      set({ error: friendly(e) })
+    }
+  },
+
+  freezeMany: async (nodeIds) => {
+    try {
+      for (const id of nodeIds) await window.electronAPI.occ.freezeNode(id)
       await get().refresh()
     } catch (e) {
       set({ error: friendly(e) })
