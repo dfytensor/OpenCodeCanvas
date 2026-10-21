@@ -1,0 +1,15 @@
+{
+  "id": "schedule-jitter",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "82a43db",
+  "wallSec": 853,
+  "agentStatus": "completed",
+  "selfClaimedDone": true,
+  "integrityOk": true,
+  "verifyOk": true,
+  "pass": true,
+  "finalTail": "hedule_next_run()` 后 `next_run - now = 1.633s`，落在 [1, 1+5] 区间；附加随机性验证：40 次采样 jitter=4 时 delta ∈ [1.069, 4.708]，span=3.64s、std=1.02（确为随机）；jitter=0 时 delta=2.000s 与原固定行为完全一致；上游测试套件（tzset shim 后）40 passed / 41 skipped（skip 均为 Windows 无 `time.tzset` 的预存环境限制），无回归\nFITNESS: 1.00\n\n（已合并 1 个 worker 工作区到项目根目录）",
+  "verifyTail": "PASS every().do(..., jitter=N) �����ұ���Ϊ job.jitter\r\nPASS jitter=10 ʱ next_run �� [2s, 12.5s]��30 �β�����\r\nPASS Ĭ���� jitter��next_run �� interval��5s �� 2s��\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-21T18:36:35.600Z"
+}

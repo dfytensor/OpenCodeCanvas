@@ -1,0 +1,15 @@
+{
+  "id": "tabulate-sort",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "268615a",
+  "wallSec": 925,
+  "agentStatus": "running",
+  "selfClaimedDone": false,
+  "integrityOk": true,
+  "verifyOk": true,
+  "pass": true,
+  "finalTail": "",
+  "verifyTail": "PASS �����ı����� --sort\r\nPASS --sort 0 ���������a, b, c��\r\nPASS -S 1 ����а��� 1 ������1, 2, 3��\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-21T18:52:36.660Z"
+}

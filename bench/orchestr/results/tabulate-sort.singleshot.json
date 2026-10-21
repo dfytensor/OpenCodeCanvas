@@ -1,0 +1,13 @@
+{
+  "id": "tabulate-sort",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "268615a",
+  "wallSec": 10,
+  "filesWritten": 1,
+  "verifyOk": false,
+  "pass": false,
+  "rawTail": "en(args.output, \\\"w\\\", encoding=\\\"utf-8\\\") as fp:\\n            fp.write(result)\\n            fp.write(\\\"\\\\n\\\")\\n    else:\\n        print(result)\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    main()\\n\"}]}\n```",
+  "verifyTail": "rt\r\nFAIL --sort 0 ���������a, b, c��  Traceback (most recent call last):\r\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\r\n  File \"<frozen runpy>\", line 88, in _run_code\r\n  File \"F:\\occ-bench\\workspaces\\tabulate-sort\\tabulate\\__mai\r\nFAIL -S 1 ����а��� 1 ������1, 2, 3��  Traceback (most recent call last):\r\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\r\n  File \"<frozen runpy>\", line 88, in _run_code\r\n  File \"F:\\occ-bench\\workspaces\\tabulate-sort\\tabulate\\__mai\r\nRESULT: FAIL\r\n",
+  "ts": "2026-10-21T17:24:49.022Z"
+}

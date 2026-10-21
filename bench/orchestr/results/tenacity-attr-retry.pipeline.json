@@ -1,0 +1,15 @@
+{
+  "id": "tenacity-attr-retry",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "32ac68f",
+  "wallSec": 916,
+  "agentStatus": "running",
+  "selfClaimedDone": false,
+  "integrityOk": true,
+  "verifyOk": false,
+  "pass": false,
+  "finalTail": "",
+  "verifyTail": "FAIL retry.retry_if_exception_attribute ����\r\nFAIL retry.retry_if_not_exception_attribute ����\r\nFAIL tenacity ���㵼�� retry_if_exception_attribute\r\nFAIL tenacity ���㵼�� retry_if_not_exception_attribute\r\nRESULT: FAIL\r\n",
+  "ts": "2026-10-21T19:07:54.485Z"
+}

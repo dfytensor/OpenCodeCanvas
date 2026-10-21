@@ -1,0 +1,13 @@
+{
+  "id": "tenacity-attr-retry",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "32ac68f",
+  "wallSec": 28,
+  "filesWritten": 0,
+  "verifyOk": false,
+  "pass": false,
+  "rawTail": "ne,\\n    ) -> bool | None:\\n        if exc_type is not None and exc_value is not None:\\n            self.retry_state.set_exception((exc_type, exc_value, traceback))\\n            return True  # Swallow",
+  "verifyTail": "FAIL retry.retry_if_exception_attribute ����\r\nFAIL retry.retry_if_not_exception_attribute ����\r\nFAIL tenacity ���㵼�� retry_if_exception_attribute\r\nFAIL tenacity ���㵼�� retry_if_not_exception_attribute\r\nRESULT: FAIL\r\n",
+  "ts": "2026-10-21T17:25:17.850Z"
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "schedule-jitter",
+    "pass": true,
+    "wallSec": 20
+  },
+  {
+    "id": "tabulate-sort",
+    "pass": false,
+    "wallSec": 10
+  },
+  {
+    "id": "tenacity-attr-retry",
+    "pass": false,
+    "wallSec": 28
+  }
+]

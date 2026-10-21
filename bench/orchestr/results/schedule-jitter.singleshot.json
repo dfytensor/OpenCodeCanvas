@@ -1,0 +1,13 @@
+{
+  "id": "schedule-jitter",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "82a43db",
+  "wallSec": 20,
+  "filesWritten": 1,
+  "verifyOk": true,
+  "pass": true,
+  "rawTail": " = default_scheduler.run_all\\nclear = default_scheduler.clear\\ncancel_job = default_scheduler.cancel_job\\nnext_run = default_scheduler.next_run\\nidle_seconds = default_scheduler.idle_seconds\\n\"}]}\n```",
+  "verifyTail": "PASS every().do(..., jitter=N) �����ұ���Ϊ job.jitter\r\nPASS jitter=10 ʱ next_run �� [2s, 12.5s]��30 �β�����\r\nPASS Ĭ���� jitter��next_run �� interval��5s �� 2s��\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-21T17:24:37.147Z"
+}
