@@ -90,3 +90,29 @@
 | T14 tidy-canvas | 手动叠放两个聊天 → 点整理 → 坐标分离 + localStorage 落盘 | 91 chats 重排、持久化，PASS |
 
 **完整 heavy 回归：UX-SUMMARY 14/14 全过**。首轮 13/14：T3 预算门在 `waitFinal` 4 分钟窗口内未见 final——dev 日志无报错、重跑 T3 PASS（toast/badge/focus 全真），判定为模型侧瞬时超时，非回归。观察模式截图 `cv-before.png` / `cv-after.png`（86 chat 项目）。
+
+## 全中文文案 + 运行时可见性（T15，2026-10-21 增补）
+
+术语表：聊天 / worker / 调度 / 验收员 / 预算 / 快路径 / 产物 / 工作区。
+
+**文案统一**
+
+- 渲染层：ChatNode 状态与角色标签、OccNode 状态/菜单/提示、GraphCanvas 空态与右键菜单、TopBar 设置/模型下拉/运行徽标、EventStream 空态、事件流状态词，全部中文化
+- 主进程叙述：executor / agent session / chat 共 23 处英文串中文化（`goal accepted:` → 已接受目标、`round N/M: dispatching` → 第 N/M 轮：派发、`still working on the previous goal` → 上一个目标还在执行…）
+- `?auto=1` 观察模式：无 `&suite=` 时只暴露 `__occStore`，不再默认跑 legacy 套件
+- T15 黑名单扫描（页面 + 设置弹层 + 右键菜单）：0 泄漏
+
+**运行时可见性**
+
+| 能力 | 实现 | 实测 |
+|---|---|---|
+| 运行状态条 `data-occ="run-stage"` | 阶段（规划/执行/合并/验收/快路径）+ 已用时 + 最近事件距今（>90s 琥珀色） | 真实管线采样 40 次：计时 0→84s 单调递增，跨分钟 m:ss 正确 |
+| 等待原因 `data-occ="awaiting-reason"` | 权限/预算门说明 + 已等待时长 | T3 heavy 实测 |
+| 计时锚点 | ChatEntry.time 改 ISO（显示兼容旧 HH:MM）；锚点=最后 final 后首条 user（快路径升级不重置） | 升级场景 0→1→8s 连续不归零 |
+
+**顺带修复的真 bug**
+
+- **■ 停止在管线启动窗口失效**：abortNode 只终止「当时已存在」的子孙节点，管线继续派发 worker 并跑完（T5 现场：停止后仍完成）。修复：`abortedChats` 集合 + 管线检查点（快路径前 / 派发前 / 验收前），命中即落「已按你的要求停止执行。」final。T5 实测 `halt-final landed, 停止文案`
+- 停止竞态下测试误报：T5 允许「点击前已完成」分支；T3 改为断言门恢复（`已确认`）而非等最终 verdict（前者是功能，后者是模型天气）；T4 门超时 3→5 分钟
+
+**回归**：连续 4 轮 heavy，前三轮各挂 1 项并逐一根因修复（T5 停止竞态=真 bug / T3 等 final=测试设计 / T4 门超时=模型端慢），最终 **UX-SUMMARY 15/15 全过**。

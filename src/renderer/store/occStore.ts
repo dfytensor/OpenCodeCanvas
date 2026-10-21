@@ -21,14 +21,14 @@ export interface OccLogEntry {
 }
 
 const STATUS_VERB: Record<string, string> = {
-  provisioning: '⟳ provisioning',
-  running: '⟳ running',
-  awaiting_input: '⚠ awaiting input',
-  completed: '✓ completed',
-  failed: '✗ failed',
-  aborted: '■ aborted',
-  frozen: '❄ frozen',
-  archived: '▤ archived'
+  provisioning: '⟳ 启动中',
+  running: '⟳ 执行中',
+  awaiting_input: '⚠ 等待输入',
+  completed: '✓ 已完成',
+  failed: '✗ 失败',
+  aborted: '■ 已中止',
+  frozen: '❄ 已冻结',
+  archived: '▤ 已归档'
 }
 
 let logSeq = 0

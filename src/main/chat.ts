@@ -19,7 +19,8 @@ function chatFile(rootDir: string, chatId: NodeID): string {
 }
 
 function now(): string {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  // ISO so the UI can compute elapsed time / freshness; display formats to HH:MM
+  return new Date().toISOString()
 }
 
 export async function createChat(rootDir: string): Promise<string> {
@@ -103,7 +104,7 @@ export async function chatSend(rootDir: string, chatId: NodeID, text: string): P
     emitOccEvent({
       type: 'pipeline.chat',
       role: 'manager',
-      text: 'still working on the previous goal — wait for it to finish (or abort the running nodes).',
+      text: '上一个目标还在执行 — 请等它结束（或先在节点上点中止）。',
       nodeId: chatId,
       chatId
     })

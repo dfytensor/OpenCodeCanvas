@@ -65,13 +65,13 @@ export default function TopBar(): React.ReactElement {
 
           <div className="mx-1 h-5 w-px bg-canvas-border" />
 
-          <select className={sel} value={project.policy.engine} onChange={(e) => void setEngine(e.target.value as 'opencode' | 'native')} title="execution engine">
+          <select className={sel} value={project.policy.engine} onChange={(e) => void setEngine(e.target.value as 'opencode' | 'native')} title="执行引擎">
             <option value="native">⚡ native</option>
             <option value="opencode">opencode</option>
           </select>
 
-          <select className={`${sel} max-w-[200px]`} value={modelValue} onChange={(e) => void setDefaultModel(e.target.value)} title="default model">
-            <option value="">🤖 default model</option>
+          <select className={`${sel} max-w-[200px]`} value={modelValue} onChange={(e) => void setDefaultModel(e.target.value)} title="默认模型">
+            <option value="">🤖 跟随默认</option>
             {(models?.providers ?? []).flatMap((p) =>
               p.models.map((m) => (
                 <option key={`${p.id}/${m.id}`} value={`${p.id}/${m.id}`}>{p.name} · {m.name}</option>
@@ -148,9 +148,10 @@ export default function TopBar(): React.ReactElement {
 
       {/* settings gear */}
       <button
+        data-occ="settings-btn"
         className="ml-1 rounded-md p-1 text-gray-500 transition-colors hover:text-gray-300"
         onClick={() => setShowSettings((v) => !v)}
-        title="settings"
+        title="设置"
       >
         ⚙
       </button>
@@ -165,7 +166,7 @@ export default function TopBar(): React.ReactElement {
 
       {showSettings && (
         <div className="absolute right-3 top-12 z-50 max-h-[82vh] w-72 overflow-y-auto rounded-lg border border-canvas-border bg-canvas-node p-3 shadow-xl">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500">Settings</p>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500">设置</p>
           <label className="mb-2 block text-[10px] text-gray-400">
             模型 Provider（第一公里：贴 key → 测试 → 保存）
             <div className="mt-1 flex gap-1.5">
@@ -217,7 +218,7 @@ export default function TopBar(): React.ReactElement {
             <input
               type="password"
               className="mt-1 w-full rounded-md border border-canvas-border bg-canvas-bg px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-canvas-accent"
-              placeholder="sk-or-... (for Jev cascade)"
+              placeholder="sk-or-…（Jev 级联用）"
               value={jevKey}
               onChange={(e) => setJevKeyInput(e.target.value)}
             />
@@ -341,7 +342,7 @@ function RunningBadge(): React.ReactElement | null {
   return (
     <span className="flex items-center gap-1.5 rounded-full border border-canvas-accent/30 bg-canvas-accent/10 px-2.5 py-0.5 text-[10px] text-canvas-accent">
       <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
-      {running} running
+      {running} 个运行中
     </span>
   )
 }

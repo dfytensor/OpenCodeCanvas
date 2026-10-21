@@ -259,7 +259,7 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
 
     if (result.aborted) {
       await transitionNode(rootDir, session.nodeId, 'aborted').catch(() => undefined)
-      chat('manager', `${session.title} aborted`, session.nodeId, session.chatId)
+      chat('manager', `${session.title} 已中止`, session.nodeId, session.chatId)
     } else {
       // accumulate real provider usage onto the node (cost visibility)
       const g = await getGraph(rootDir)
@@ -271,14 +271,14 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
           cached: prev.cached
         }
       }).catch(() => undefined)
-      chat('worker', `✓ ${session.title} done (${result.steps} steps, ${result.usage.completionTokens} out-tokens)`, session.nodeId, session.chatId)
+      chat('worker', `✓ ${session.title} 完成（${result.steps} 步，输出 ${result.usage.completionTokens} tokens）`, session.nodeId, session.chatId)
     }
   } catch (e) {
     await patchNode(rootDir, session.nodeId, {
       status: session.aborted ? 'aborted' : 'failed',
       error: String(e).slice(0, 300)
     }).catch(() => undefined)
-    chat('worker', `${session.aborted ? '■' : '✗'} ${session.title} ${session.aborted ? 'aborted' : 'failed'}: ${String(e).slice(0, 300)}`, session.nodeId, session.chatId)
+    chat('worker', `${session.aborted ? '■' : '✗'} ${session.title} ${session.aborted ? '已中止' : '失败'}：${String(e).slice(0, 300)}`, session.nodeId, session.chatId)
   } finally {
     session.busy = false
     emitStream('', true)
@@ -327,7 +327,7 @@ export async function startAgentSession(
   sessions.set(session.id, session)
   gcSessions()
   await patchNode(rootDir, node.id, { sessionId: session.id, channel: 'brief' }).catch(() => undefined)
-  chat('worker', `▸ ${node.title} [${session.providerRef}] started`, node.id, session.chatId)
+  chat('worker', `▸ ${node.title} [${session.providerRef}] 启动`, node.id, session.chatId)
   await persist(session)
 
   void runTurn(session, rootDir)

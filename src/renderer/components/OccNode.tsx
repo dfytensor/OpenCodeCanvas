@@ -4,15 +4,15 @@ import type { NodeStatus, SessionNode } from '../../shared/types'
 import { useOccStore } from '../store/occStore'
 
 const STATUS_STYLE: Record<NodeStatus, { dot: string; ring: string; text: string; label: string }> = {
-  draft: { dot: 'bg-gray-500', ring: 'border-gray-600', text: 'text-gray-400', label: 'draft' },
-  provisioning: { dot: 'bg-blue-400 occ-breathe', ring: 'border-blue-500/50', text: 'text-blue-300', label: 'provisioning' },
-  running: { dot: 'bg-canvas-accent occ-breathe', ring: 'border-canvas-accent/60', text: 'text-canvas-accent', label: 'running' },
-  awaiting_input: { dot: 'bg-amber-400 occ-blink', ring: 'border-amber-400/70', text: 'text-amber-300', label: 'awaiting input' },
-  completed: { dot: 'bg-emerald-500', ring: 'border-emerald-500/40', text: 'text-emerald-400', label: 'completed' },
-  failed: { dot: 'bg-red-500', ring: 'border-red-500/50', text: 'text-red-400', label: 'failed' },
-  aborted: { dot: 'bg-orange-500', ring: 'border-orange-500/40', text: 'text-orange-400', label: 'aborted' },
-  frozen: { dot: 'bg-slate-400', ring: 'border-slate-400/40', text: 'text-slate-300', label: 'frozen' },
-  archived: { dot: 'bg-slate-600', ring: 'border-slate-600/40', text: 'text-slate-500', label: 'archived' }
+  draft: { dot: 'bg-gray-500', ring: 'border-gray-600', text: 'text-gray-400', label: '草稿' },
+  provisioning: { dot: 'bg-blue-400 occ-breathe', ring: 'border-blue-500/50', text: 'text-blue-300', label: '启动中' },
+  running: { dot: 'bg-canvas-accent occ-breathe', ring: 'border-canvas-accent/60', text: 'text-canvas-accent', label: '执行中' },
+  awaiting_input: { dot: 'bg-amber-400 occ-blink', ring: 'border-amber-400/70', text: 'text-amber-300', label: '等待输入' },
+  completed: { dot: 'bg-emerald-500', ring: 'border-emerald-500/40', text: 'text-emerald-400', label: '已完成' },
+  failed: { dot: 'bg-red-500', ring: 'border-red-500/50', text: 'text-red-400', label: '失败' },
+  aborted: { dot: 'bg-orange-500', ring: 'border-orange-500/40', text: 'text-orange-400', label: '已中止' },
+  frozen: { dot: 'bg-slate-400', ring: 'border-slate-400/40', text: 'text-slate-300', label: '已冻结' },
+  archived: { dot: 'bg-slate-600', ring: 'border-slate-600/40', text: 'text-slate-500', label: '已归档' }
 }
 
 const KIND_BADGE: Record<string, string> = {
@@ -142,19 +142,19 @@ export const OccNode = memo(function OccNode({ id, data, selected }: NodeProps):
                   </div>
                 ))
               ) : (
-                <span>no content indexed yet</span>
+                <span>暂无索引内容</span>
               )}
             </div>
           )}
           <div className="mt-1.5 flex flex-wrap gap-1 border-t border-canvas-border pt-1.5">
             {[
-              { label: '⇄ diff', disabled: !node.workDir, fn: () => void useOccStore.getState().showDiff(node.id) },
-              { label: '⎇ inherit', fn: () => setWizard(true), disabled: false },
-              { label: node.status === 'frozen' ? '♨ unfreeze' : '❄ freeze', disabled: node.status !== 'frozen' && node.status !== 'completed', fn: () => void (node.status === 'frozen' ? unfreeze(node.id) : freeze(node.id)) },
-              { label: '▤ archive', disabled: node.status !== 'frozen', fn: () => void archive(node.id) },
-              { label: '⬇ apply', disabled: !node.workDir, fn: () => void apply(node.id).then((m) => window.alert(m)) },
-              { label: '■ abort', disabled: node.status !== 'running' && node.status !== 'awaiting_input', fn: () => void abort(node.id) },
-              { label: '💬 message', disabled: node.status === 'frozen' || node.status === 'archived', fn: () => { const t = window.prompt('message for this node:'); if (t) void send(node.id, t) } }
+              { label: '⇄ 对比', disabled: !node.workDir, fn: () => void useOccStore.getState().showDiff(node.id) },
+              { label: '⎇ 继承', fn: () => setWizard(true), disabled: false },
+              { label: node.status === 'frozen' ? '♨ 解冻' : '❄ 冻结', disabled: node.status !== 'frozen' && node.status !== 'completed', fn: () => void (node.status === 'frozen' ? unfreeze(node.id) : freeze(node.id)) },
+              { label: '▤ 归档', disabled: node.status !== 'frozen', fn: () => void archive(node.id) },
+              { label: '⬇ 应用', disabled: !node.workDir, fn: () => void apply(node.id).then((m) => window.alert(m)) },
+              { label: '■ 中止', disabled: node.status !== 'running' && node.status !== 'awaiting_input', fn: () => void abort(node.id) },
+              { label: '💬 留言', disabled: node.status === 'frozen' || node.status === 'archived', fn: () => { const t = window.prompt('给这个节点留言：'); if (t) void send(node.id, t) } }
             ].map((b) => (
               <button
                 key={b.label}

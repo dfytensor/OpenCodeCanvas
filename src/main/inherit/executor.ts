@@ -443,7 +443,13 @@ export async function sendToNode(rootDir: string, nodeId: NodeID, message: strin
   }
 }
 
+// chats whose ■ 停止 was pressed — checked by the pipeline at safe points.
+// A bare status transition loses the race when the stop lands before workers
+// exist: the pipeline would keep spawning and finish the job anyway.
+const abortedChats = new Set<NodeID>()
+
 export async function abortNode(rootDir: string, nodeId: NodeID): Promise<void> {
+  abortedChats.add(nodeId)
   const graph = await getGraph(rootDir)
   const node = graph.nodes[nodeId]
   if (!node) return
@@ -1038,7 +1044,7 @@ async function budgetGate(
 }
 
 function suffixOf(applied: number): string {
-  return applied > 0 ? `\n\n(${applied} worker workspace(s) merged into the project root)` : ''
+  return applied > 0 ? `\n\n（已合并 ${applied} 个 worker 工作区到项目根目录）` : ''
 }
 
 // ───────────────────────── blackboard stigmergy (worker↔worker indirect interaction, I↑) ─────────────────────────
@@ -1237,7 +1243,7 @@ export function startAdaptivePipeline(
   rootDir: string,
   opts: { parentId: NodeID; goal: string; maxRounds?: number; channel?: 'fork' | 'brief'; chatId?: NodeID }
 ): void {
-  void runAdaptive(rootDir, opts).catch((e) => chat('final', `pipeline error: ${String(e)}`, undefined, opts.chatId))
+  void runAdaptive(rootDir, opts).catch((e) => chat('final', `管线错误：${String(e)}`, undefined, opts.chatId))
 }
 
 async function runAdaptive(
@@ -1248,6 +1254,8 @@ async function runAdaptive(
   const maxRounds = opts.maxRounds ?? project0?.policy.maxRounds ?? 5
   const channel = opts.channel ?? 'fork'
   const cid = opts.chatId
+  // a retry (new message) clears the previous stop — this run is fresh
+  if (cid) abortedChats.delete(cid)
   let baseId = opts.parentId
   const goalLines = opts.goal.split('\n').map((s) => s.trim()).filter(Boolean)
   const goalText = goalLines.length > 1 ? goalLines.map((l, i) => `${i + 1}. ${l}`).join(' ') : goalLines[0]
@@ -1259,7 +1267,7 @@ async function runAdaptive(
   let frontier = opts.parentId
   const shape = shapeKey(goalText)
 
-  chat('manager', `goal accepted: ${goalText}`, undefined, cid)
+  chat('manager', `已接受目标：${goalText}`, undefined, cid)
   const pipelineStart = Date.now()
   const firstTasks = () => tasks.length
   let roundsUsed = 0
@@ -1304,11 +1312,11 @@ async function runAdaptive(
           // names no missing creation targets — a wrong ANSWER skips the work
           const missing = missingArtifacts(rootDir, opts.goal)
           if (missing.length === 0) {
-            chat('manager', 'trivial goal — answering directly, no nodes needed', undefined, cid)
+            chat('manager', '简单目标 — 直接回答，不展开执行', undefined, cid)
             chat('final', opts.goal, undefined, cid)
             return
           }
-          chat('manager', `Jev said ANSWER, but missing artifacts: ${missing.join(', ')} — rerouting to BUILD`, undefined, cid)
+          chat('manager', `Jev 判定直接回答，但缺少产物：${missing.join(', ')} — 改走执行`, undefined, cid)
           tasks = [opts.goal.trim()]
         } else {
           // build route confirmed — the structured plan below decides tasks/levels
@@ -1327,11 +1335,11 @@ async function runAdaptive(
         // names no missing creation targets — a wrong ANSWER skips the work
         const missing = missingArtifacts(rootDir, opts.goal)
         if (missing.length === 0) {
-          chat('manager', 'trivial goal — answering directly, no nodes needed', undefined, cid)
+          chat('manager', '简单目标 — 直接回答，不展开执行', undefined, cid)
           chat('final', plan.answer || opts.goal, undefined, cid)
           return
         }
-        chat('manager', `planner suggested ANSWER, but missing artifacts: ${missing.join(', ')} — rerouting to BUILD`, undefined, cid)
+        chat('manager', `规划器建议直接回答，但缺少产物：${missing.join(', ')} — 改走执行`, undefined, cid)
         tasks = [opts.goal.trim()]
       } else {
         tasks = plan.tasks
@@ -1349,16 +1357,22 @@ async function runAdaptive(
     decide(rootDir, 'plan', `build: ${tasks.length} task(s)`, cid)
     chat(
       'manager',
-      `plan: ${tasks.length} first-round task(s) — ${tasks.length > 1 ? 'parallel fan-out' : 'serial chain ready'}`,
+      `规划：${tasks.length} 个首轮任务 — ${tasks.length > 1 ? '并行 fan-out' : '串行链就绪'}`,
       undefined,
       cid
     )
   } catch (e) {
-    chat('manager', `planner unavailable (${String(e).slice(0, 80)}) — defaulting to direct build`, undefined, cid)
+    chat('manager', `规划器不可用（${String(e).slice(0, 80)}）— 回退直接执行`, undefined, cid)
   }
 
   // ── fast path retry with planner-refined tasks (only if the pre-planner
   // attempt never ran — e.g. the goal looked heavy until the plan clarified it)
+  // stop landed during planning / route selection
+  if (cid && abortedChats.has(cid)) {
+    chat('manager', '■ 已按你的要求停止（快路径前）', undefined, cid)
+    chat('final', '已按你的要求停止执行。', undefined, cid)
+    return
+  }
   if (await tryFast(tasks)) {
     return
   }
@@ -1367,6 +1381,12 @@ async function runAdaptive(
   let lastPerWorker = 0
 
   for (let round = 1; round <= maxRounds; round++) {
+    // stop pressed while planning / between rounds → land the stop as final
+    if (cid && abortedChats.has(cid)) {
+      chat('manager', '■ 已按你的要求停止（派发前）', undefined, cid)
+      chat('final', '已按你的要求停止执行。', undefined, cid)
+      return
+    }
     // budget gate: remind + wait for confirmation when over budget (§ cost planning)
     const gate = await budgetGate(rootDir, cid, round, tasks, spent, lastPerWorker)
     if (process.env.OCC_DEBUG) console.error('[DBG] round', round, 'gate →', gate)
@@ -1377,7 +1397,7 @@ async function runAdaptive(
       return
     }
 
-    chat('manager', `round ${round}/${maxRounds}: dispatching ${tasks.length} worker(s)`, undefined, cid)
+    chat('manager', `第 ${round}/${maxRounds} 轮：派发 ${tasks.length} 个 worker`, undefined, cid)
 
     // ── shared round snapshot: ONE copy of mainline@now for the whole round
     // instead of one per worker (IO ×N saved on parallel fan-out)
@@ -1470,7 +1490,7 @@ async function runAdaptive(
           chatId: cid
         })
         childIds.push(res.node.id)
-        chat('worker', `▸ spawned: ${task}`, res.node.id, cid)
+        chat('worker', `▸ 已派发：${task}`, res.node.id, cid)
       }
       if (chunks.length > 1) {
         await waitTerminal(rootDir, childIds, 10 * 60 * 1000)
@@ -1504,7 +1524,7 @@ async function runAdaptive(
       if (n.status === 'completed' || n.status === 'frozen' || n.status === 'archived') finished.push(id)
       const tail = (await lastAssistantText(rootDir, n)).slice(0, 500)
       tails.set(id, tail)
-      chat('worker', `▪ ${n.title} [${n.status}] ${tail ? '→ ' + tail : '(no output)'}`, id, cid)
+      chat('worker', `▪ ${n.title} [${n.status}] ${tail ? '→ ' + tail : '(无输出)'}`, id, cid)
     }
     spent += roundTokens
     if (finished.length > 0) lastPerWorker = Math.round(roundTokens / finished.length)
@@ -1517,7 +1537,7 @@ async function runAdaptive(
         'final',
         rateLimited
           ? '⚠️ provider 限流/配额已用尽（429）——额度恢复后重试即可，无需改代码'
-          : 'all workers failed — pipeline stopped',
+          : '所有 worker 失败 — 管线停止',
         undefined,
         cid
       )
@@ -1564,7 +1584,7 @@ async function runAdaptive(
     const missing = missingArtifacts(rootDir, goalText)
     if (missing.length > 0 && round < maxRounds) {
       decide(rootDir, 'closure', `merged but missing: ${missing.join(', ')}`, cid)
-      chat('manager', `round ${round} merged, but missing artifacts: ${missing.join(', ')} — extending`, undefined, cid)
+      chat('manager', `第 ${round} 轮已合并，但缺少产物：${missing.join(', ')} — 延长执行`, undefined, cid)
       tasks = missing.map((f) => `原目标：${goalText}。创建缺失的文件 ${f}（已有内容保持不变）。写入后验证存在，然后报告任务完成。`)
       baseId = frontier
       continue
@@ -1603,6 +1623,13 @@ async function runAdaptive(
         verified: false,
         verifySkipped: true
       })
+      return
+    }
+
+    // stop pressed while workers were running → land the stop before verification
+    if (cid && abortedChats.has(cid)) {
+      chat('manager', '■ 已按你的要求停止（验收前）', undefined, cid)
+      chat('final', '已按你的要求停止执行。', undefined, cid)
       return
     }
 
@@ -1687,7 +1714,7 @@ async function runAdaptive(
         chatId: cid
       }
     )
-    chat('manager', `round ${round} results merged → evaluating`, evaluation.node.id, cid)
+    chat('manager', `第 ${round} 轮结果已合并 → 验收中`, evaluation.node.id, cid)
     frontier = evaluation.node.id
 
     await waitTerminal(rootDir, [evaluation.node.id], 8 * 60 * 1000)
@@ -1696,7 +1723,7 @@ async function runAdaptive(
     let text = en ? await lastAssistantText(rootDir, en) : ''
     roundsUsed = round
     if (!text) {
-      chat('final', 'evaluator produced no verdict (provider issue?) — stopping', undefined, cid)
+      chat('final', '验收员未产出结论（可能是模型侧问题）— 停止', undefined, cid)
       return
     }
     chat('manager', text.slice(0, 800), evaluation.node.id, cid)
@@ -1723,7 +1750,7 @@ async function runAdaptive(
     // extend instead of declaring victory
     if (verdictDone && closureMissing.length > 0 && round < maxRounds) {
       decide(rootDir, 'closure', `DONE but missing: ${closureMissing.join(', ')} — extending`, cid)
-      chat('manager', `evaluator says DONE, but missing artifacts: ${closureMissing.join(', ')} — extending`, undefined, cid)
+      chat('manager', `验收员判定完成，但缺少产物：${closureMissing.join(', ')} — 延长执行`, undefined, cid)
       tasks = closureMissing.map((f) => `原目标：${goalText}。创建缺失的文件 ${f}（已有内容保持不变）。写入后验证存在，然后报告任务完成。`)
       baseId = evaluation.node.id
       continue
@@ -1817,7 +1844,7 @@ async function runAdaptive(
         const pct = Math.round(((prevTok - spent) / prevTok) * 100)
         delta = `\n\n(自我评估：本轮 ${wallSec}s / ${nowK}k tokens | 本聊天历史均值 ${Math.round(prevTok / 1000)}k tokens — ${pct >= 0 ? '省 ' + pct + '%' : '多花 ' + -pct + '%'}；验收${verdictDone ? '通过' : '达轮次上限'})`
       }
-      chat('final', (answer || '(done — no final text)') + suffixOf(applied) + delta, evaluation.node.id, cid)
+      chat('final', (answer || '(已完成 — 无最终文本)') + suffixOf(applied) + delta, evaluation.node.id, cid)
       void updateProjectState(rootDir, goalText, 'success', (answer || '').slice(0, 300) + suffixOf(applied))
       decide(rootDir, 'merge-back', `${applied} workspace(s) applied to mainline`, cid)
       await saveFrontier(rootDir, cid, frontier)
@@ -1845,7 +1872,7 @@ async function runAdaptive(
       .slice(0, 3)
     if (next.length && seenTaskSets.has(normTasks(next))) {
       const answer = text.replace(/VERDICT:\s*\w+/i, '').trim()
-      chat('final', (answer || 'workers report the goal is complete.') + ' (repeated tasks — converged)', evaluation.node.id, cid)
+      chat('final', (answer || 'worker 报告目标已完成。') + '（重复任务 — 已收敛）', evaluation.node.id, cid)
       return
     }
     tasks = next.length ? next : [goalText]

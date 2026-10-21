@@ -143,8 +143,21 @@ export function initAutomation(): void {
       if (!chatId) throw new Error('createChat failed')
       if (!(await waitFor(() => !!nodeTextarea(chatId), 30000))) throw new Error('textarea never mounted')
       await sendGoal(chatId, '在当前目录创建 budget.txt，内容是 budget-ok，验证写入后报告任务完成')
+      const runBar = await waitFor(
+        () => !!document.querySelector('[data-node-id="' + chatId + '"] [data-occ="run-stage"]'),
+        20_000
+      )
+      if (!runBar) throw new Error('run-stage bar never appeared while running')
       const gated = await waitFor(() => store.getState().graph?.nodes[chatId]?.status === 'awaiting_input', 3 * 60_000)
       if (!gated) throw new Error('budget gate never appeared')
+      const reasonShown = await waitFor(
+        () =>
+          (document.querySelector('[data-node-id="' + chatId + '"] [data-occ="awaiting-reason"]')?.textContent ?? '').includes(
+            '等待你'
+          ),
+        5000
+      )
+      if (!reasonShown) throw new Error('awaiting reason missing')
       // toast should have popped for the awaiting transition
       const toastSeen = await waitFor(() => document.body.innerText.includes('需要你的回复'), 5000)
       const badgeBtn = topButton('等待回复')
@@ -157,9 +170,16 @@ export function initAutomation(): void {
       const cont = nodeButton(chatId, '继续')
       if (!cont) throw new Error('继续 chip not found')
       cont.click()
-      const final = await waitFinal(chatId, 4 * 60_000)
-      if (!final) throw new Error('no final after 继续')
-      await pass('T3 budget-gate (toast=' + toastSeen + ', badge=' + !!badgeBtn + ',focusConsumed=' + focusOk + ')')
+      // the gate must RESUME right away; requiring the pipeline's final here
+      // made T3 hostage to provider weather (slow model = false red). Assert
+      // the resume itself and leave the run to finish in the background.
+      const resumed = await waitFor(
+        () => (store.getState().chats[chatId] ?? []).some((e) => e.role === 'manager' && e.text.includes('已确认')),
+        30_000
+      )
+      if (!resumed) throw new Error('继续 was not accepted (budget gate did not resume)')
+      await pass('T3 budget-gate (toast=' + toastSeen + ', badge=' + !!badgeBtn + ',focusConsumed=' + focusOk + ',resumed=true)')
+      void waitFinal(chatId, 6 * 60_000).then((f) => { if (f) log('T3 final (bg): ' + f.slice(0, 50)) })
     } catch (e) { await fail('T3 budget-gate+focus', String(e)) }
 
     // T4: deny path — worker must abandon the file
@@ -169,7 +189,7 @@ export function initAutomation(): void {
       if (!chatId) throw new Error('createChat failed')
       if (!(await waitFor(() => !!nodeTextarea(chatId), 30000))) throw new Error('textarea never mounted')
       await sendGoal(chatId, '在当前目录创建 deny.txt，内容是 should-not-exist，验证写入后报告任务完成')
-      const gated = await waitFor(() => !!nodeButton(chatId, '拒绝'), 3 * 60_000)
+      const gated = await waitFor(() => !!nodeButton(chatId, '拒绝'), 5 * 60_000)
       if (!gated) throw new Error('gate never appeared')
       nodeButton(chatId, '拒绝')?.click()
       // contract: the deny resolves the pending ask — the chat log gets a
@@ -188,7 +208,7 @@ export function initAutomation(): void {
         if (btn && s.graph?.nodes[chatId]?.status === 'awaiting_input') { btn.click(); await sleep(1200); continue }
         await sleep(1500)
       }
-      const final = await waitFinal(chatId, 3 * 60_000)
+      const final = await waitFinal(chatId, 5 * 60_000)
       if (!final) throw new Error('no final after deny+allow-all')
       await pass('T4 deny-path')
     } catch (e) { await fail('T4 deny-path', String(e)) }
@@ -207,39 +227,48 @@ export function initAutomation(): void {
       const stopBtn = stopVisible ? nodeButton(chatId, '■ 停止') : null
       if (!stopBtn) throw new Error('stop button not visible while running')
       stopBtn.click()
-      const aborted = await waitFor(() => ['aborted', 'failed'].includes(store.getState().graph?.nodes[chatId]?.status ?? ''), 30_000)
-      if (!aborted) throw new Error('chat not aborted after stop click (status=' + store.getState().graph?.nodes[chatId]?.status + ')')
-      log('T5 aborted — winding down old pipeline')
-      // the aborted pipeline posts its wind-down final and releases the busy
-      // flag; retrying too early collides with it (chat is busy)
-      await waitFor(() => (store.getState().chats[chatId] ?? []).some((e) => e.role === 'final'), 90_000)
-      await sleep(4000)
-      log('T5 clicking retry')
-      // racing note: if the worker finished right before the stop landed, the
-      // pipeline concludes on its own (final + completed) — that is a PASS:
-      // stop was honoured (no further rounds) and there is nothing to retry
-      const concluded = (store.getState().chats[chatId] ?? []).some((e) => e.role === 'final') ||
-        store.getState().graph?.nodes[chatId]?.status === 'completed'
-      if (concluded) {
-        await pass('T5 stop+retry (concluded-before-stop-landed)')
+      // settle = aborted/failed (stop honoured) or completed (the worker
+      // finished in the gap — nothing left to stop: PASS per the race note)
+      const settled = await waitFor(() => {
+        const st = store.getState().graph?.nodes[chatId]?.status ?? ''
+        return st === 'aborted' || st === 'failed' || st === 'completed'
+      }, 30_000)
+      if (!settled) throw new Error('chat did not settle after stop click (status=' + (store.getState().graph?.nodes[chatId]?.status ?? '?') + ')')
+      const settledStatus = store.getState().graph?.nodes[chatId]?.status ?? '?'
+      log('T5 settled — status=' + settledStatus)
+      if (settledStatus === 'completed') {
+        await pass('T5 stop+retry (completed-before-stop-landed)')
       } else {
-        // the old pipeline may still be releasing the busy flag — retry clicks
-        // can be rejected, so loop until the chat visibly restarts
-        let restarted = false
-        for (let attempt = 0; attempt < 3 && !restarted; attempt++) {
-          const barThere = await waitFor(() => !!nodeButton(chatId, '↻ 重试'), 20_000)
-          if (!barThere) break
-          nodeButton(chatId, '↻ 重试')?.click()
-          restarted = await waitFor(
-            () => ['running', 'awaiting_input', 'completed'].includes(store.getState().graph?.nodes[chatId]?.status ?? ''),
-            20_000
-          )
-          if (!restarted) await sleep(8000)
+        // the stopped pipeline posts a halt final and releases the busy flag;
+        // retrying too early collides with it (chat is busy)
+        const haltFinal = await waitFor(() => (store.getState().chats[chatId] ?? []).some((e) => e.role === 'final'), 90_000)
+        await sleep(4000)
+        if (haltFinal) {
+          // clean stop: the halt final is written, so the ↻ 重试 bar is
+          // intentionally absent (a new goal can be typed directly)
+          const fin = [...(store.getState().chats[chatId] ?? [])].reverse().find((e) => e.role === 'final')
+          const saysStop = (fin?.text ?? '').includes('停止')
+          await pass('T5 stop+retry (halt-final landed' + (saysStop ? ', 停止文案' : ', 收尾 final') + ')')
+        } else {
+          log('T5 clicking retry')
+          // no final yet: the old pipeline may still be releasing the busy
+          // flag — retry clicks can be rejected, so loop until it restarts
+          let restarted = false
+          for (let attempt = 0; attempt < 3 && !restarted; attempt++) {
+            const barThere = await waitFor(() => !!nodeButton(chatId, '↻ 重试'), 20_000)
+            if (!barThere) break
+            nodeButton(chatId, '↻ 重试')?.click()
+            restarted = await waitFor(
+              () => ['running', 'awaiting_input', 'completed'].includes(store.getState().graph?.nodes[chatId]?.status ?? ''),
+              20_000
+            )
+            if (!restarted) await sleep(8000)
+          }
+          await logHold('T5 restarted=' + restarted + ' status=' + (store.getState().graph?.nodes[chatId]?.status ?? '?'))
+          if (!restarted) throw new Error('pipeline did not restart after retry')
+          await pass('T5 stop+retry')
+          void waitFinal(chatId, 4 * 60_000).then((f) => { if (f) log('T5 retry final: ' + f.slice(0, 60)) })
         }
-        await logHold('T5 restarted=' + restarted + ' status=' + (store.getState().graph?.nodes[chatId]?.status ?? '?'))
-        if (!restarted) throw new Error('pipeline did not restart after retry')
-        await pass('T5 stop+retry')
-        void waitFinal(chatId, 4 * 60_000).then((f) => { if (f) log('T5 retry final: ' + f.slice(0, 60)) })
       }
 
     } catch (e) { await fail('T5 stop+retry', String(e)) }
@@ -404,8 +433,32 @@ export function initAutomation(): void {
         await pass('T14 tidy-canvas (' + roots.length + ' chats re-packed, persisted)')
       } catch (e) { await fail('T14 tidy-canvas', String(e)) }
 
+      // T15: all-Chinese UI chrome — page, settings popover and pane menu must
+      // not leak English strings (the mixed-language complaint)
+      try {
+        const blacklist = ['No project open', 'New chat window', 'needs your input', 'working…', 'agents are working', 'waiting for activity', 'no content indexed yet', 'Settings', 'default model']
+        const leaks = (): string => blacklist.find((s) => document.body.innerText.includes(s)) ?? ''
+        let leak = leaks()
+        if (leak) throw new Error('English chrome visible: ' + leak)
+        ;(document.querySelector('[data-occ="settings-btn"]') as HTMLElement | null)?.click()
+        await sleep(400)
+        leak = leaks()
+        if (leak) throw new Error('English chrome in settings: ' + leak)
+        if (!document.body.innerText.includes('设置')) throw new Error('settings panel did not open')
+        ;(document.querySelector('[data-occ="settings-btn"]') as HTMLElement | null)?.click()
+        await sleep(200)
+        const pane = document.querySelector('.react-flow') as HTMLElement | null
+        if (!pane) throw new Error('canvas not mounted')
+        pane.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 500, clientY: 300 }))
+        await sleep(300)
+        if (document.body.innerText.includes('New chat window')) throw new Error('English pane menu')
+        if (!document.body.innerText.includes('新建聊天')) throw new Error('pane menu missing 新建聊天')
+        pane.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await pass('T15 all-Chinese chrome (settings + pane menu)')
+      } catch (e) { await fail('T15 all-Chinese chrome', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/14: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/15: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)

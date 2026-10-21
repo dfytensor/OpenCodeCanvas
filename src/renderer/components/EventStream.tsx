@@ -24,7 +24,7 @@ export function EventStream(): React.ReactElement {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
         {log.length === 0 ? (
-          <p className="py-2 text-center text-[10px] text-gray-700">waiting for activity…</p>
+          <p className="py-2 text-center text-[10px] text-gray-700">等待活动…</p>
         ) : (
           log.slice(-40).map((e) => (
             <div key={e.id} className="flex gap-1.5 py-px text-[10px] leading-relaxed">

@@ -87,7 +87,7 @@ export function GraphCanvas(): React.ReactElement {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
-          <div className="text-lg font-medium text-gray-500">No project open</div>
+          <div className="text-lg font-medium text-gray-500">未打开项目</div>
           <div className="mt-1 text-sm text-gray-600">点击顶部「打开项目」选择工作目录</div>
         </div>
       </div>
@@ -106,7 +106,7 @@ export function GraphCanvas(): React.ReactElement {
   const paneMenuItems = (): MenuEntry[] => [
     {
       id: 'new-chat',
-      label: 'New chat window',
+      label: '新建聊天',
       icon: '💬',
       onSelect: () => {
         const screen = menuPos.current

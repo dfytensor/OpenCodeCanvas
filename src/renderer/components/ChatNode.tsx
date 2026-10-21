@@ -16,15 +16,15 @@ const STATUS_DOT: Record<NodeStatus, string> = {
 }
 
 const STATUS_LABEL: Record<NodeStatus, string> = {
-  draft: 'ready',
-  provisioning: 'starting…',
-  running: 'working…',
-  awaiting_input: 'needs your input',
-  completed: 'done',
-  failed: 'failed',
-  aborted: 'stopped',
-  frozen: 'frozen',
-  archived: 'archived'
+  draft: '就绪',
+  provisioning: '启动中…',
+  running: '执行中…',
+  awaiting_input: '等待你回复',
+  completed: '已完成',
+  failed: '失败',
+  aborted: '已停止',
+  frozen: '已冻结',
+  archived: '已归档'
 }
 
 const ROLE_STYLE: Record<string, string> = {
@@ -35,10 +35,10 @@ const ROLE_STYLE: Record<string, string> = {
 }
 
 const ROLE_TAG: Record<string, string> = {
-  user: 'you',
-  manager: 'manager',
-  worker: 'agent',
-  final: '✅ result'
+  user: '你',
+  manager: '调度',
+  worker: 'worker',
+  final: '✅ 结果'
 }
 
 const ROLE_ALIGN: Record<string, string> = {
@@ -55,6 +55,25 @@ const QUICK_ACTIONS = [
   { icon: '📖', label: '解释这段代码' },
   { icon: '⚡', label: '优化性能' }
 ]
+
+// compact duration: 12s / 3m05s / 1h12m
+function fmtDur(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return s + 's'
+  const m = Math.floor(s / 60)
+  if (m < 60) return m + 'm' + String(s % 60).padStart(2, '0') + 's'
+  return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') + 'm'
+}
+
+// ChatEntry.time is ISO going forward; legacy entries stored local "HH:MM"
+function fmtClock(t?: string): string {
+  if (!t) return ''
+  if (/^\d{1,2}:\d{2}$/.test(t)) return t
+  const ms = Date.parse(t)
+  if (!Number.isFinite(ms)) return t
+  const d = new Date(ms)
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+}
 
 export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement => {
   const node = (data as { node: SessionNode }).node
@@ -100,14 +119,18 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
     return total
   }, [graph, id])
 
-  // stage label from the latest manager narration
+  // stage from the latest narration — Chinese-first (main-process copy is
+  // localized); English tokens stay in the matcher so old logs still classify.
+  // Scan the WHOLE log: worker detail lines can push manager narration far back.
   const stage = useMemo(() => {
-    for (let i = log.length - 1; i >= 0 && i >= log.length - 5; i--) {
+    for (let i = log.length - 1; i >= 0; i--) {
       const e = log[i]
       if (e.role !== 'manager') continue
-      if (/plan|拆解|task|route/i.test(e.text)) return '拆解完成，agents 执行中'
-      if (/merged|evaluating|验收|verdict/i.test(e.text)) return '验收中…'
-      if (/round \d|worker|创建|fork/i.test(e.text)) return 'agents 执行中'
+      if (/验收|verdict|evaluat/i.test(e.text)) return '验收中…'
+      if (/合并|merged/i.test(e.text)) return '合并中…'
+      if (/快路径/.test(e.text)) return '快路径执行中…'
+      if (/规划|目标|plan|goal/i.test(e.text)) return '规划中…'
+      if (/轮|派发|worker|spawn|启动|执行|round/i.test(e.text)) return '执行中…'
     }
     return '规划中…'
   }, [log])
@@ -126,6 +149,40 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const isBudgetAsk = awaiting && /预算/.test(lastText)
   const gateReplies = isBudgetAsk ? ['继续', '取消'] : ['允许', '全部允许', '拒绝']
 
+  // live clock: elapsed run time + freshness of the last event. Ticks only
+  // while the chat is busy, so idle cards stay quiet.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!working && !awaiting) return
+    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(t)
+  }, [working, awaiting])
+  // anchor = the FIRST user message after the last final (a run may append
+  // more user entries mid-flight when the fast path escalates; those must not
+  // reset the clock). Legacy HH:MM entries fail Date.parse → fall back to the
+  // moment this card first saw the chat become busy.
+  const runAnchor = useMemo(() => {
+    let lastFinal = -1
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i].role === 'final') {
+        lastFinal = i
+        break
+      }
+    }
+    for (let i = lastFinal + 1; i < log.length; i++) if (log[i].role === 'user') return log[i]
+    return undefined
+  }, [log])
+  const [busySince, setBusySince] = useState<number | null>(null)
+  useEffect(() => {
+    if (working) setBusySince((p) => p ?? Date.now())
+    else setBusySince(null)
+  }, [working])
+  const parsedRun = runAnchor?.time ? Date.parse(runAnchor.time) : NaN
+  const runStart = Number.isFinite(parsedRun) ? parsedRun : busySince ?? now
+  const elapsed = working ? Math.max(0, now - runStart) : 0
+  const parsedEvent = lastEntry?.time ? Date.parse(lastEntry.time) : NaN
+  const sinceEvent = Number.isFinite(parsedEvent) ? Math.max(0, now - parsedEvent) : 0
+
   // acceptance report card: structured outcome once the pipeline concluded
   const hasFinal = log.some((e) => e.role === 'final')
   const [stats, setStats] = useState<Record<string, unknown> | null>(null)
@@ -139,6 +196,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
 
   return (
     <div
+      data-node-id={id}
       className={`occ-born flex w-[380px] flex-col overflow-hidden rounded-xl border bg-canvas-node/95 shadow-lg backdrop-blur ${
         selected
           ? 'border-canvas-accent shadow-[0_0_18px_rgba(47,129,247,0.35)]'
@@ -181,6 +239,22 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
         )}
       </div>
 
+      {/* live run bar: stage + elapsed + freshness, only while busy */}
+      {working && (
+        <div
+          data-occ="run-stage"
+          className="mx-2 mt-2 flex items-center gap-2 rounded-md border border-canvas-accent/25 bg-canvas-accent/5 px-2 py-1"
+        >
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
+          <span className="text-[10px] font-medium text-canvas-accent">{stage}</span>
+          <span className="text-[10px] tabular-nums text-gray-400" title="本次运行已用时">⏱ {fmtDur(elapsed)}</span>
+          <div className="flex-1" />
+          <span className={`text-[9px] ${sinceEvent > 90_000 ? 'text-amber-400' : 'text-gray-500'}`}>
+            {sinceEvent > 3000 ? `最近事件 ${fmtDur(sinceEvent)} 前` : '进行中'}
+          </span>
+        </div>
+      )}
+
       {/* acceptance report card — the moat, made visible */}
       {showReport && (
         <div className={`mx-2 mb-1 rounded-lg border px-2.5 py-2 ${(stats?.outcome as string) === 'success' ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-red-500/40 bg-red-500/10'}`}>
@@ -209,8 +283,10 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       {/* gate reply bar: permission / budget asks are answered with one click */}
       {awaiting && (isPermAsk || isBudgetAsk) && (
         <div className="mx-2 mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
-          <p className="mb-1 text-[10px] font-medium text-amber-300">
-            {isPermAsk ? '🔐 agents 请求权限 — 选择回复' : '💰 预算确认 — 选择回复'}
+          <p className="mb-1 text-[10px] font-medium text-amber-300" data-occ="awaiting-reason">
+            {isPermAsk
+              ? `🔐 等待你批准工具操作${sinceEvent > 3000 ? `（已等待 ${fmtDur(sinceEvent)}）` : ''}`
+              : `💰 预算已到上限，等待你决定${sinceEvent > 3000 ? `（已等待 ${fmtDur(sinceEvent)}）` : ''}`}
           </p>
           <div className="flex gap-1.5">
             {gateReplies.map((r) => (
@@ -236,7 +312,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           <div className="flex h-full flex-col items-center justify-center px-3 text-center">
             <p className="text-xs font-medium text-gray-300">给一个目标</p>
             <p className="mt-1.5 text-[10px] leading-relaxed text-gray-500">
-              agent 会拆解任务、并行执行、验收结果
+              会自动拆解任务、并行执行、验收结果
             </p>
             <div className="mt-3 flex flex-wrap justify-center gap-1.5">
               {QUICK_ACTIONS.map((q) => (
@@ -256,7 +332,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
             <div className={`max-w-[95%] rounded-lg border px-2.5 py-1.5 ${ROLE_STYLE[c.role] ?? ROLE_STYLE.worker}`}>
               <div className="mb-0.5 flex items-center gap-1.5">
                 <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">{ROLE_TAG[c.role] ?? c.role}</span>
-                <span className="text-[8px] opacity-30">{c.time}</span>
+                <span className="text-[8px] opacity-30">{fmtClock(c.time)}</span>
                 {c.role === 'final' && (
                   <button
                     className="ml-auto text-[8px] opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-60"
@@ -278,7 +354,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
             <div key={nid} className="flex flex-col">
               <div className="max-w-[95%] rounded-lg border border-canvas-border bg-canvas-node/60 px-2.5 py-1.5 text-gray-400">
                 <div className="mb-0.5 flex items-center gap-1.5">
-                  <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">agent · {graph?.nodes[nid]?.title ?? nid}</span>
+                  <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">worker · {graph?.nodes[nid]?.title ?? nid}</span>
                   <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
                 </div>
                 <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">
@@ -334,7 +410,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
                 ? '或直接输入：允许 / 全部允许 / 拒绝'
                 : '需要你的回复…'
               : working
-                ? 'agents are working… you can type a follow-up after they finish'
+                ? 'worker 正在执行…结束后可继续追问'
                 : '描述你的目标…（支持多行 = 多个子任务）'
           }
           value={input}
