@@ -1,0 +1,15 @@
+{
+  "id": "tabulate-transpose",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "268615a",
+  "wallSec": 925,
+  "agentStatus": "running",
+  "selfClaimedDone": false,
+  "integrityOk": true,
+  "verifyOk": false,
+  "pass": false,
+  "finalTail": "",
+  "verifyTail": "FAIL 帮助文本包含 --transpose\r\nFAIL -t 转置为 3×2 且值位置正确  Usage: tabulate [options] [FILE ...]\r\n\r\nPretty-print tabular data. Use Python module for more features.\r\n\r\nFILE                      a filename of the file with tabular data;\r\n                          if \r\nPASS 不加 -t 保持原样（首行 a, b, c）\r\nRESULT: FAIL\r\n",
+  "ts": "2026-10-21T23:32:58.766Z"
+}

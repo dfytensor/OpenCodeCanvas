@@ -1,0 +1,15 @@
+{
+  "id": "tabulate-encoding",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "268615a",
+  "wallSec": 927,
+  "agentStatus": "running",
+  "selfClaimedDone": false,
+  "integrityOk": false,
+  "verifyOk": true,
+  "pass": false,
+  "finalTail": "",
+  "verifyTail": "PASS 帮助文本包含 --encoding\r\nPASS --encoding utf-8 正确读取中文\r\nPASS 默认编码出现乱码（证明 --encoding 必要）\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-21T23:17:31.131Z"
+}

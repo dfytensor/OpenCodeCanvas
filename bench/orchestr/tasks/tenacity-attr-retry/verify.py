@@ -11,6 +11,8 @@ import sys
 sys.path.insert(0, ".")
 tenacity = importlib.import_module("tenacity")
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # never crash printing mojibake diagnostics
+
 fails = []
 
 

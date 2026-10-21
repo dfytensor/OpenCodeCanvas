@@ -13,6 +13,8 @@ import sys
 sys.path.insert(0, ".")
 schedule = importlib.import_module("schedule")
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # never crash printing mojibake diagnostics
+
 fails = []
 
 

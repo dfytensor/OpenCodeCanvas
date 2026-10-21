@@ -1,0 +1,13 @@
+{
+  "id": "tablib-sort-by",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "966876c",
+  "wallSec": 20,
+  "filesWritten": 0,
+  "verifyOk": false,
+  "pass": false,
+  "rawTail": " j):\\n        return self._row[i:j]\\n\\n    def __getslice__(self, i, j):\\n        return self._row[i:j]\\n\\n    def __getslice__(self, i, j):\\n        return self._row[i:j]\\n\\n    def __getslice__(self",
+  "verifyTail": "",
+  "ts": "2026-10-21T22:45:20.277Z"
+}

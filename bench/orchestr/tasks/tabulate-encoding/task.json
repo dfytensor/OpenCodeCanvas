@@ -1,0 +1,10 @@
+{
+  "id": "tabulate-encoding",
+  "repo": "https://github.com/astanin/python-tabulate",
+  "commit": "268615a",
+  "description": "为 tabulate 的命令行工具（tabulate/cli.py）新增输入文件编码支持：添加 `-E ENC` / `--encoding ENC` 选项，读取输入文件（csv/rsv 格式）时以 ENC 编码打开（默认保持系统区域设置不变）。同时在 cli.py 的 usage 文档里补充该选项说明。典型用途：读取 UTF-8 中文/非 ASCII 文件时避免按系统代码页误读。",
+  "timeoutMin": 15,
+  "verify": "python verify.py",
+  "integrity": ["test/"],
+  "criteriaSummary": "1) CLI 帮助出现 --encoding；2) --encoding utf-8 正确读取 UTF-8 中文 CSV（含中文字段名与值）；3) 默认编码下同样内容出现乱码（证明选项的必要性，Windows 代码页环境）"
+}

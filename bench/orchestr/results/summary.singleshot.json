@@ -1,17 +1,22 @@
 [
   {
-    "id": "schedule-jitter",
-    "pass": true,
+    "id": "tablib-sort-by",
+    "pass": false,
     "wallSec": 20
   },
   {
-    "id": "tabulate-sort",
+    "id": "tabulate-encoding",
     "pass": false,
-    "wallSec": 10
+    "wallSec": 4
   },
   {
-    "id": "tenacity-attr-retry",
+    "id": "tabulate-transpose",
     "pass": false,
-    "wallSec": 28
+    "wallSec": 4
+  },
+  {
+    "id": "toml-sort-keys",
+    "pass": false,
+    "wallSec": 23
   }
 ]

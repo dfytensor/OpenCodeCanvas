@@ -1,12 +1,22 @@
 [
   {
-    "id": "tabulate-sort",
-    "pass": true,
+    "id": "tablib-sort-by",
+    "pass": false,
+    "wallSec": 924
+  },
+  {
+    "id": "tabulate-encoding",
+    "pass": false,
+    "wallSec": 927
+  },
+  {
+    "id": "tabulate-transpose",
+    "pass": false,
     "wallSec": 925
   },
   {
-    "id": "tenacity-attr-retry",
+    "id": "toml-sort-keys",
     "pass": false,
-    "wallSec": 916
+    "wallSec": 939
   }
 ]

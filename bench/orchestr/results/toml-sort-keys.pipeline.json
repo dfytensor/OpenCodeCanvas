@@ -1,0 +1,15 @@
+{
+  "id": "toml-sort-keys",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "65bab75",
+  "wallSec": 939,
+  "agentStatus": "running",
+  "selfClaimedDone": false,
+  "integrityOk": false,
+  "verifyOk": true,
+  "pass": false,
+  "finalTail": "",
+  "verifyTail": "PASS 默认：b = 1 在最前\r\nPASS 默认：嵌套保持插入序（d 在 c 前）\r\nPASS sort_keys：输出非空\r\nPASS sort_keys：标量 b 仍在 [a] 之前（TOML 结构约束）\r\nPASS sort_keys：[a] 内嵌套键 c 在 d 前\r\nPASS dump(文件, sort_keys) 同样生效\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-21T23:48:39.848Z"
+}

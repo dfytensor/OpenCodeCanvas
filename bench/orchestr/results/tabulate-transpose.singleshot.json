@@ -1,0 +1,13 @@
+{
+  "id": "tabulate-transpose",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "268615a",
+  "wallSec": 4,
+  "filesWritten": 1,
+  "verifyOk": false,
+  "pass": false,
+  "rawTail": "n        sys.stdout.write(\\\"\\\\n\\\")\\n    else:\\n        with open(outfile, \\\"w\\\") as f:\\n            f.write(table)\\n            f.write(\\\"\\\\n\\\")\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    main()\\n\"}]}\n```",
+  "verifyTail": "FAIL 帮助文本包含 --transpose\r\nFAIL -t 转置为 3×2 且值位置正确\r\nFAIL 不加 -t 保持原样（首行 a, b, c）\r\nRESULT: FAIL\r\n",
+  "ts": "2026-10-21T22:45:32.560Z"
+}

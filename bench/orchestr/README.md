@@ -27,13 +27,17 @@ node runner.mjs --tasks all
 node singleshot.mjs --tasks all
 ```
 
-## 任务列表
+## 任务列表（7 / 目标 10）
 
 | id | 仓库 | commit | 任务 |
 |---|---|---|---|
 | tabulate-sort | astanin/python-tabulate | 268615a | CLI 新增 `-S/--sort COLUMN` 排序 |
+| tabulate-encoding | astanin/python-tabulate | 268615a | CLI 新增 `-E/--encoding ENC` 输入编码 |
+| tabulate-transpose | astanin/python-tabulate | 268615a | CLI 新增 `-t/--transpose` 转置 |
 | tenacity-attr-retry | jd/tenacity | 32ac68f | 新增 `retry_if_(not_)exception_attribute` |
 | schedule-jitter | dbader/schedule | 82a43db | `do(..., jitter=N)` 抖动调度 |
+| toml-sort-keys | uiri/toml | 65bab75 | `dump(s)(..., sort_keys=True)` 键排序 |
+| tablib-sort-by | jazzband/tablib | 966876c | Dataset 新增 `sort_by(column, reverse)` |
 
 ## 结果
 

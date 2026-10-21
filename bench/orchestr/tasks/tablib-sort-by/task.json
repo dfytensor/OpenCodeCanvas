@@ -1,0 +1,10 @@
+{
+  "id": "tablib-sort-by",
+  "repo": "https://github.com/jazzband/tablib",
+  "commit": "966876c",
+  "description": "为 tablib（jazzband/tablib，src/tablib/core.py 的 Dataset 类）新增 `sort_by(column, reverse=False)` 方法：按指定列名对行排序，返回一个**新的** Dataset 实例（不修改原数据集）。column 不存在时抛出合理异常（如 KeyError）。",
+  "timeoutMin": 15,
+  "verify": "python verify.py",
+  "integrity": ["tests/", "src/tablib/formats/"],
+  "criteriaSummary": "1) sort_by('name') 返回新 Dataset 且按 name 升序；2) 原 Dataset 顺序不变；3) reverse=True 降序；4) 不存在的列抛异常"
+}

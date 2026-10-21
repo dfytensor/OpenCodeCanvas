@@ -26,7 +26,7 @@ if (!KEY) {
 const tasks = []
 for (const dir of fs.readdirSync(BENCH + '/tasks')) {
   if (!only || only.includes(dir)) {
-    const t = JSON.parse(fs.readFileSync(BENCH + '/tasks/' + dir + '/task.json', 'utf8'))
+    const t = JSON.parse(fs.readFileSync(BENCH + '/tasks/' + dir + '/task.json', 'utf8').replace(/^\uFEFF/, ''))
     t.verifyAbs = BENCH + '/tasks/' + dir + '/verify.py'
     t.repoDir = path.basename(t.repo).replace(/\.git$/, '')
     tasks.push(t)

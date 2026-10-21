@@ -1,0 +1,15 @@
+{
+  "id": "tablib-sort-by",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "commit": "966876c",
+  "wallSec": 924,
+  "agentStatus": "running",
+  "selfClaimedDone": false,
+  "integrityOk": false,
+  "verifyOk": true,
+  "pass": false,
+  "finalTail": "",
+  "verifyTail": "PASS sort_by 返回新实例（非原地）\r\nPASS 按 name 升序（a, b, c）\r\nPASS 原 Dataset 顺序不变（b, a, c）\r\nPASS reverse=True 降序（c, b, a）\r\nPASS 不存在的列抛异常\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-21T23:02:01.843Z"
+}

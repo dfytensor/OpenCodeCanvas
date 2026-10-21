@@ -1,0 +1,13 @@
+{
+  "id": "tabulate-encoding",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "268615a",
+  "wallSec": 4,
+  "filesWritten": 1,
+  "verifyOk": false,
+  "pass": false,
+  "rawTail": "            with io.open(args.output, \\\"w\\\", encoding=\\\"utf-8\\\") as out:\\n                out.write(result)\\n                out.write(\\\"\\\\n\\\")\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    _main()\\n\"}]}\n```",
+  "verifyTail": "PASS 帮助文本包含 --encoding\r\nFAIL --encoding utf-8 正确读取中文  usage: Usage: tabulate [options] [FILE ...]\r\n\r\nFILE:\r\n    A filename of the file with tabular data.\r\n    If \"-\" or missing, read data from stdin.\r\n\r\nOptions:\r\n    -h, --help      show this message\r\n    -1, --\r\nPASS 默认编码出现乱码（证明 --encoding 必要）\r\nRESULT: FAIL\r\n",
+  "ts": "2026-10-21T22:45:26.401Z"
+}

@@ -11,6 +11,8 @@ import sys
 
 os.chdir(os.path.dirname(os.path.abspath("__file__")) or ".")
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # never crash printing mojibake diagnostics
+
 fails = []
 
 
