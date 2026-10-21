@@ -98,7 +98,10 @@ export default function Onboarding(): React.ReactElement | null {
     setBusy(true)
     try {
       const id = await createChat()
-      if (id) await sendChat(id, goal)
+      if (id) {
+        useOccStore.getState().requestFocus(id)
+        await sendChat(id, goal)
+      }
     } finally {
       setBusy(false)
     }

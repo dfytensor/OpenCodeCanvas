@@ -37,7 +37,6 @@ export function GraphCanvas(): React.ReactElement {
   const project = useOccStore((s) => s.project)
   const createChat = useOccStore((s) => s.createChat)
   const rf = useReactFlow()
-  const prevCount = useRef(0)
   const menuPos = useRef({ x: 400, y: 300 })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const showDormant = useOccStore((s) => s.showDormant)
@@ -68,16 +67,26 @@ export function GraphCanvas(): React.ReactElement {
     return { flowNodes, flowEdges }
   }, [graph, showDormant])
 
+  // first view per project: land on the newest active chat instead of fitting
+  // a 100+ node map into a wall of thumbnails. New nodes appearing later never
+  // move the camera — the eye must keep its target (§9.2).
+  const projectId = graph?.projectId
   useEffect(() => {
-    if (!graph) return
-    const count = Object.keys(graph.nodes).length
-    if (count > prevCount.current) {
-      const t = setTimeout(() => rf.fitView({ padding: 0.3, duration: 400, maxZoom: 1 }), 60)
-      prevCount.current = count
-      return () => clearTimeout(t)
-    }
-    prevCount.current = count
-  }, [graph, rf])
+    if (!graph || !projectId) return
+    const roots = Object.values(graph.nodes).filter(
+      (n) => n.kind === 'root' && n.parents.length === 0 && n.status !== 'frozen' && n.status !== 'archived'
+    )
+    const newest = roots.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    const target = newest.find((n) => n.status === 'running' || n.status === 'awaiting_input') ?? newest[0]
+    const t = setTimeout(() => {
+      const node = target ? rf.getNode(target.id) : undefined
+      if (node) rf.setCenter(node.position.x + 190, node.position.y + 150, { zoom: 0.85, duration: 0 })
+      else if (Object.keys(graph.nodes).length > 0) rf.fitView({ padding: 0.3 })
+    }, 150)
+    return () => clearTimeout(t)
+    // once per project open; graph identity changes must not move the camera
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, rf])
 
   // one-shot focus requests (e.g. "N awaiting input" badge) pan to the node
   const focusNode = useOccStore((s) => s.focusNode)
@@ -92,15 +101,19 @@ export function GraphCanvas(): React.ReactElement {
       useOccStore.setState({ focusNode: null })
       return
     }
-    // the target may be hidden because it is dormant — reveal the layer and
-    // retry on the next pass instead of silently doing nothing
     const target = graph?.nodes[focusNode]
-    if (!showDormant && target && (target.status === 'frozen' || target.status === 'archived')) {
+    if (!target) {
+      useOccStore.setState({ focusNode: null })
+      return
+    }
+    // hidden dormant node → reveal the layer and retry on the next pass
+    if (!showDormant && (target.status === 'frozen' || target.status === 'archived')) {
       useOccStore.getState().setShowDormant(true)
       return
     }
-    useOccStore.setState({ focusNode: null })
-  }, [focusNode, rf, showDormant, graph])
+    // node exists in the graph but is not mounted yet — keep the request; the
+    // effect re-runs when the node list updates (a fresh chat mounts a frame later)
+  }, [focusNode, rf, showDormant, graph, flowNodes])
 
   if (!graph || !project) {
     return (
@@ -146,7 +159,9 @@ export function GraphCanvas(): React.ReactElement {
   const tidyCanvas = (): void => {
     tidyLayout(graph)
     void useOccStore.getState().refresh().then(() => {
-      setTimeout(() => rf.fitView({ padding: 0.2, duration: 500 }), 60)
+      // cap the zoom: fit the whole 100+ chat grid and it collapses into
+      // unreadable thumbnails — show a readable slice, MiniMap has the overview
+      setTimeout(() => rf.fitView({ padding: 0.2, duration: 500, minZoom: 0.35 }), 60)
     })
   }
 
@@ -189,8 +204,6 @@ export function GraphCanvas(): React.ReactElement {
         edges={flowEdges}
         nodeTypes={nodeTypes}
         onNodeDragStop={(_e, node) => pinPosition(graph.projectId, node.id, node.position)}
-        fitView
-        fitViewOptions={{ padding: 0.3 }}
         minZoom={0.08}
         maxZoom={2.5}
         nodesConnectable={false}

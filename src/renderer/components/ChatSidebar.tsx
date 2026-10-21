@@ -69,7 +69,7 @@ export function ChatSidebar(): React.ReactElement | null {
         <div className="flex-1" />
         <button
           className="rounded px-1.5 text-[11px] text-gray-400 transition-colors hover:text-canvas-accent"
-          onClick={() => void createChat()}
+          onClick={() => void createChat().then((id) => { if (id) requestFocus(id) })}
           title="新建聊天"
         >
           ＋

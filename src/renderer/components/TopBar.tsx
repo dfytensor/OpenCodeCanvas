@@ -87,7 +87,7 @@ export default function TopBar(): React.ReactElement {
 
           <button
             className="rounded-md border border-canvas-border px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-canvas-accent hover:text-canvas-accent"
-            onClick={() => void createChat()}
+            onClick={() => void createChat().then((id) => { if (id) useOccStore.getState().requestFocus(id) })}
             title="新建聊天"
           >
             ＋ 聊天

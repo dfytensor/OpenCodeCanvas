@@ -45,7 +45,11 @@ export default function CanvasHero(): React.ReactElement | null {
 
   const start = async (): Promise<void> => {
     const id = await createChat()
-    if (id) await sendChat(id, goal)
+    if (!id) return
+    // bring the camera to the fresh card — on a 100+ chat map a new node
+    // created off-screen looks like nothing happened
+    useOccStore.getState().requestFocus(id)
+    await sendChat(id, goal)
   }
 
   return (

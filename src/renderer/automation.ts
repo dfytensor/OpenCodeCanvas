@@ -495,8 +495,33 @@ export function initAutomation(): void {
         await pass('T16 dormant chats (hide/reveal/unfreeze, filters, batch button)')
       } catch (e) { await fail('T16 dormant chats', String(e)) }
 
+      // T17: a new chat must land in the viewport at a readable zoom —
+      // "+ 聊天" that silently drops a card off-screen looks like a no-op
+      try {
+        const before = new Set(Object.keys(store.getState().graph?.nodes ?? {}))
+        const addBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('＋ 聊天')) as HTMLElement | undefined
+        if (!addBtn) throw new Error('＋聊天 button missing')
+        addBtn.click()
+        let id = ''
+        const created = await waitFor(() => {
+          const g = store.getState().graph
+          const n = g ? Object.values(g.nodes).find((x) => !before.has(x.id) && x.kind === 'root') : undefined
+          if (n) id = n.id
+          return !!n
+        }, 15_000)
+        if (!created || !id) throw new Error('chat not created via button')
+        const focused = await waitFor(() => {
+          const card = document.querySelector('.react-flow [data-node-id="' + id + '"]')
+          if (!card) return false
+          const r = card.getBoundingClientRect()
+          return r.width > 200 && r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight
+        }, 10_000)
+        if (!focused) throw new Error('new chat not focused in view at readable zoom')
+        await pass('T17 new-chat focus (card in view, width>200px)')
+      } catch (e) { await fail('T17 new-chat focus', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/16: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/17: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)
