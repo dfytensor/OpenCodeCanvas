@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
 import type { ChatEntry, NodeStatus, SessionNode } from '../../shared/types'
 import { useOccStore } from '../store/occStore'
@@ -46,6 +46,88 @@ const ROLE_ALIGN: Record<string, string> = {
   final: 'items-end'
 }
 
+// one bubble — module scope so the memoized log can render without props churn
+const bubble = (c: ChatEntry): React.ReactElement => (
+  <div key={c.id} data-occ="chat-bubble" data-role={c.role} className={`group flex flex-col ${ROLE_ALIGN[c.role] ?? ''}`}>
+    <div className={`max-w-[95%] rounded-lg border px-2.5 py-1.5 ${ROLE_STYLE[c.role] ?? ROLE_STYLE.worker}`}>
+      <div className="mb-0.5 flex items-center gap-1.5">
+        <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">{ROLE_TAG[c.role] ?? c.role}</span>
+        <span className="text-[8px] opacity-30">{fmtClock(c.time)}</span>
+        {c.role === 'final' && (
+          <button
+            className="ml-auto text-[8px] opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-60"
+            title="复制结果"
+            onClick={() => void navigator.clipboard.writeText(c.text)}
+          >
+            ⧉
+          </button>
+        )}
+      </div>
+      <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">{c.text}</p>
+    </div>
+  </div>
+)
+
+// per-token stream updates re-render the chat card; this memo keeps the whole
+// message list out of that path (log identity only changes on real events)
+const ChatLog = memo(function ChatLog({
+  log,
+  conclusionsOnly,
+  expandedTurns,
+  onToggleTurn
+}: {
+  log: ChatEntry[]
+  conclusionsOnly: boolean
+  expandedTurns: Record<string, boolean>
+  onToggleTurn: (key: string, expanded: boolean) => void
+}): React.ReactElement {
+  // long chats stay readable: entries grouped into turns (one per user
+  // message); older turns collapse to a summary row, the newest stays open
+  const turns = useMemo(() => {
+    const out: Array<{ key: string; user?: ChatEntry; entries: ChatEntry[] }> = []
+    let cur: { key: string; user?: ChatEntry; entries: ChatEntry[] } = { key: 'pre', entries: [] }
+    for (const e of log) {
+      if (e.role === 'user') {
+        if (cur.user || cur.entries.length > 0) out.push(cur)
+        cur = { key: e.id, user: e, entries: [] }
+      } else {
+        cur.entries.push(e)
+      }
+    }
+    if (cur.user || cur.entries.length > 0) out.push(cur)
+    return out
+  }, [log])
+  if (conclusionsOnly) return <>{log.filter((e) => e.role === 'user' || e.role === 'final').map(bubble)}</>
+  return (
+    <>
+      {turns.map((t, ti) => {
+        const isLast = ti === turns.length - 1
+        const expanded = isLast || !!expandedTurns[t.key]
+        const finalOfTurn = [...t.entries].reverse().find((e) => e.role === 'final')
+        const summary = (finalOfTurn?.text ?? t.entries[t.entries.length - 1]?.text ?? '').replace(/\s+/g, ' ').slice(0, 80)
+        return (
+          <div key={t.key} data-occ="turn-group">
+            {!isLast && (
+              <button
+                data-occ="turn-toggle"
+                onClick={() => onToggleTurn(t.key, expanded)}
+                className="mb-1 flex w-full items-center gap-1.5 rounded-md border border-canvas-border/60 bg-canvas-bg/40 px-2 py-1 text-left text-[9px] text-gray-500 transition-colors hover:text-gray-300"
+              >
+                <span className="shrink-0">{expanded ? '▾' : '▸'}</span>
+                <span className="shrink-0 text-gray-400">{t.user ? '第 ' + (ti + 1) + ' 轮' : '开场'}</span>
+                <span className="shrink-0 opacity-60">{t.entries.length + (t.user ? 1 : 0)} 条</span>
+                {!expanded && summary && <span className="min-w-0 truncate opacity-50">→ {summary}</span>}
+              </button>
+            )}
+            {expanded && t.user && bubble(t.user)}
+            {expanded && t.entries.map(bubble)}
+          </div>
+        )
+      })}
+    </>
+  )
+})
+
 // stable empty ref — a fresh [] in the selector would re-render forever
 const EMPTY_LOG: ChatEntry[] = []
 
@@ -82,7 +164,26 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   const loadChatLog = useOccStore((s) => s.loadChatLog)
   const abort = useOccStore((s) => s.abort)
   const graph = useOccStore((s) => s.graph)
-  const streams = useOccStore((s) => s.streams)
+  // per-token updates must NOT re-render every chat card: subscribing to the
+  // whole streams object re-rendered all ~300 cards per token (~8fps). This
+  // signature changes only when THIS chat's stream text changes.
+  const streamSig = useOccStore((s) => {
+    let sig = ''
+    for (const [nid, v] of Object.entries(s.streams ?? {})) {
+      if (v.chatId === id && v.text) sig += nid + '\u0000' + v.text + '\u0001'
+    }
+    return sig
+  })
+  const streamList = useMemo(() => {
+    if (!streamSig) return [] as Array<{ nid: string; text: string }>
+    return streamSig
+      .split('\u0001')
+      .filter(Boolean)
+      .map((chunk) => {
+        const i = chunk.indexOf('\u0000')
+        return { nid: chunk.slice(0, i), text: chunk.slice(i + 1) }
+      })
+  }, [streamSig])
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   // only truly-working states block typing; awaiting_input MUST stay answerable
@@ -152,6 +253,14 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
     for (let i = lastFinal + 1; i < log.length; i++) if (/failover|不可用/.test(log[i].text)) n++
     return n
   }, [log])
+
+  // long chats stay readable: entries grouped into turns inside the memoized
+  // ChatLog below — keeping that computation out of the per-token render path
+  const [expandedTurns, setExpandedTurns] = useState<Record<string, boolean>>({})
+  const [conclusionsOnly, setConclusionsOnly] = useState(false)
+  const toggleTurn = useCallback((key: string, expanded: boolean) => {
+    setExpandedTurns((p) => ({ ...p, [key]: !expanded }))
+  }, [])
 
   const send = (text?: string): void => {
     const msg = (text ?? input).trim()
@@ -292,6 +401,16 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           </span>
         )}
         <span className="text-[9px] text-gray-500">{STATUS_LABEL[node.status]}</span>
+        <button
+          data-occ="conclusions-toggle"
+          onClick={() => setConclusionsOnly((v) => !v)}
+          title={conclusionsOnly ? '显示全部过程记录' : '只看你的消息与最终结论'}
+          className={`shrink-0 rounded border px-1 py-px text-[9px] transition-colors ${
+            conclusionsOnly ? 'border-canvas-accent/50 text-canvas-accent' : 'border-canvas-border text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          {conclusionsOnly ? '看全部' : '只看结论'}
+        </button>
         {working && (
           <button
             className="shrink-0 rounded border border-red-500/40 px-1.5 py-px text-[9px] text-red-400 transition-colors hover:bg-red-500/20"
@@ -416,30 +535,9 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
             </div>
           </div>
         )}
-        {log.map((c) => (
-          <div key={c.id} className={`group flex flex-col ${ROLE_ALIGN[c.role] ?? ''}`}>
-            <div className={`max-w-[95%] rounded-lg border px-2.5 py-1.5 ${ROLE_STYLE[c.role] ?? ROLE_STYLE.worker}`}>
-              <div className="mb-0.5 flex items-center gap-1.5">
-                <span className="text-[8px] font-bold uppercase tracking-wider opacity-50">{ROLE_TAG[c.role] ?? c.role}</span>
-                <span className="text-[8px] opacity-30">{fmtClock(c.time)}</span>
-                {c.role === 'final' && (
-                  <button
-                    className="ml-auto text-[8px] opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-60"
-                    title="复制结果"
-                    onClick={() => void navigator.clipboard.writeText(c.text)}
-                  >
-                    ⧉
-                  </button>
-                )}
-              </div>
-              <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">{c.text}</p>
-            </div>
-          </div>
-        ))}
+        <ChatLog log={log} conclusionsOnly={conclusionsOnly} expandedTurns={expandedTurns} onToggleTurn={toggleTurn} />
         {/* live streaming bubbles — the model's partial output, growing */}
-        {Object.entries(streams ?? {})
-          .filter(([, v]) => v.chatId === id && v.text)
-          .map(([nid, v]) => (
+        {streamList.map(({ nid, text }) => (
             <div key={nid} className="flex flex-col">
               <div className="max-w-[95%] rounded-lg border border-canvas-border bg-canvas-node/60 px-2.5 py-1.5 text-gray-400">
                 <div className="mb-0.5 flex items-center gap-1.5">
@@ -447,7 +545,7 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
                   <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
                 </div>
                 <p className="whitespace-pre-wrap break-words text-[10.5px] leading-relaxed">
-                  {v.text.slice(-500)}
+                  {text.slice(-500)}
                   <span className="animate-pulse text-canvas-accent">▍</span>
                 </p>
               </div>

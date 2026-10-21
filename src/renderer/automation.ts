@@ -570,8 +570,42 @@ export function initAutomation(): void {
         await pass('T19 no-model cold start (guide → model step)')
       } catch (e) { await fail('T19 no-model cold start', String(e)) }
 
+      // T20: long-chat readability — old turns collapse to summary rows and
+      // 「只看结论」keeps only user + final bubbles
+      try {
+        const pick = (): string => {
+          const s = store.getState()
+          for (const n of Object.values(s.graph?.nodes ?? {})) {
+            const l = s.chats[n.id] ?? []
+            if (l.filter((e) => e.role === 'user').length >= 2 && l.some((e) => e.role === 'final')) return n.id
+          }
+          return ''
+        }
+        const target = pick()
+        if (!target) throw new Error('no multi-turn chat found')
+        store.setState({ focusNode: target })
+        await sleep(1000)
+        const card = (): Element | null => document.querySelector('[data-node-id="' + target + '"]')
+        if (!card()) throw new Error('multi-turn chat card missing')
+        const toggles = card()!.querySelectorAll('[data-occ="turn-toggle"]')
+        if (toggles.length === 0) throw new Error('no collapsed turn rows')
+        const before = card()!.querySelectorAll('[data-occ="chat-bubble"]').length
+        ;(toggles[0] as HTMLElement).click()
+        await sleep(300)
+        const after = card()!.querySelectorAll('[data-occ="chat-bubble"]').length
+        if (!(after > before)) throw new Error('turn did not expand (' + before + '→' + after + ')')
+        ;(card()!.querySelector('[data-occ="conclusions-toggle"]') as HTMLElement | null)?.click()
+        await sleep(300)
+        const roles = [...card()!.querySelectorAll('[data-occ="chat-bubble"]')].map((b) => b.getAttribute('data-role'))
+        if (roles.length === 0 || roles.some((r) => r !== 'user' && r !== 'final')) {
+          throw new Error('conclusions mode leaked process bubbles: ' + roles.join(','))
+        }
+        ;(card()!.querySelector('[data-occ="conclusions-toggle"]') as HTMLElement | null)?.click()
+        await pass('T20 long-chat readability (turns=' + toggles.length + ', conclusions filter)')
+      } catch (e) { await fail('T20 long-chat readability', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/19: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/20: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)
