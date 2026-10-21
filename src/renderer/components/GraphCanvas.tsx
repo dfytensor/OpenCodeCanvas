@@ -241,10 +241,10 @@ export function GraphCanvas(): React.ReactElement {
         {running > 0 ? (
           <span className="flex items-center gap-1 text-[10px] text-canvas-accent">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-canvas-accent occ-breathe" />
-            frontier · {running} running
+            前沿 · {running} 个运行中
           </span>
         ) : (
-          <span className="text-[10px] text-gray-500">idle · {Object.keys(graph.nodes).length} nodes</span>
+          <span className="text-[10px] text-gray-500">空闲 · {Object.keys(graph.nodes).length} 个节点</span>
         )}
       </div>
 

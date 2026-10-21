@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
 import type { ChatEntry, NodeStatus, SessionNode } from '../../shared/types'
 import { useOccStore } from '../store/occStore'
 
@@ -89,6 +89,9 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
   // or the user can never reply to permission/budget gates (GUI deadlock)
   const working = node.status === 'running' || node.status === 'provisioning'
   const awaiting = node.status === 'awaiting_input'
+  // selector returns a boolean → re-render only when crossing the threshold,
+  // not on every zoom frame; below it, cards collapse to a compact header
+  const compact = useStore((s) => s.transform[2] < 0.45)
 
   useEffect(() => {
     void loadChatLog(id)
@@ -133,6 +136,21 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
       if (/轮|派发|worker|spawn|启动|执行|round/i.test(e.text)) return '执行中…'
     }
     return '规划中…'
+  }, [log])
+
+  // provider failovers since the last verdict — during 4xx storms this says
+  // "it is retrying, not hung"
+  const failovers = useMemo(() => {
+    let lastFinal = -1
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i].role === 'final') {
+        lastFinal = i
+        break
+      }
+    }
+    let n = 0
+    for (let i = lastFinal + 1; i < log.length; i++) if (/failover|不可用/.test(log[i].text)) n++
+    return n
   }, [log])
 
   const send = (text?: string): void => {
@@ -193,6 +211,40 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
     void window.electronAPI.occ.chatStats(id).then(setStats).catch(() => setStatsFetched(true))
   }, [hasFinal, statsFetched, working, id])
   const showReport = hasFinal && !working && !!stats && Object.keys(stats).length > 0
+  // evaluation-first surfaced in the UI: planned criteria + per-criterion
+  // PASS/FAIL parsed from the verdict text ("标准1: PASS — …")
+  const rawCriteria = stats ? stats['criteria'] : undefined
+  const criteriaList: string[] = Array.isArray(rawCriteria) ? rawCriteria.slice(0, 4).map((x) => String(x)) : []
+  const finalText = (() => {
+    for (let i = log.length - 1; i >= 0; i--) if (log[i].role === 'final') return log[i].text
+    return ''
+  })()
+  const critStatus = (idx: number): 'pass' | 'fail' | 'unknown' => {
+    if (!finalText) return 'unknown'
+    const re = new RegExp('标准\\s*' + (idx + 1) + '\\s*[:：][^\\n]{0,80}?(PASS|FAIL|未通过|通过)', 'i')
+    const m = re.exec(finalText)
+    if (!m) return 'unknown'
+    return /PASS/i.test(m[1]) || m[1] === '通过' ? 'pass' : 'fail'
+  }
+
+  // low zoom: a compact header card keeps a 0.35 view readable instead of
+  // showing fragments of shrunken full cards
+  if (compact) {
+    return (
+      <div
+        data-node-id={id}
+        className={`occ-born flex w-[300px] items-center gap-1.5 rounded-lg border bg-canvas-node/95 px-2.5 py-1.5 shadow-md backdrop-blur ${
+          selected ? 'border-canvas-accent' : awaiting ? 'border-amber-500/70' : 'border-canvas-border'
+        }`}
+      >
+        <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-none !bg-gray-500" />
+        <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[node.status]}`} />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-200">{node.title}</span>
+        {working && <span className="shrink-0 text-[9px] tabular-nums text-canvas-accent">⏱ {fmtDur(elapsed)}</span>}
+        <span className="shrink-0 text-[9px] text-gray-500">{STATUS_LABEL[node.status]}</span>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -248,6 +300,11 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-canvas-accent" />
           <span className="text-[10px] font-medium text-canvas-accent">{stage}</span>
           <span className="text-[10px] tabular-nums text-gray-400" title="本次运行已用时">⏱ {fmtDur(elapsed)}</span>
+          {failovers > 0 && (
+            <span className="text-[9px] text-amber-400" title="模型调用失败后已自动切换备用模型">
+              模型重试 {failovers} 次
+            </span>
+          )}
           <div className="flex-1" />
           <span className={`text-[9px] ${sinceEvent > 90_000 ? 'text-amber-400' : 'text-gray-500'}`}>
             {sinceEvent > 3000 ? `最近事件 ${fmtDur(sinceEvent)} 前` : '进行中'}
@@ -277,6 +334,26 @@ export const ChatNode = ({ id, data, selected }: NodeProps): React.ReactElement 
             {stats?.verified ? <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-emerald-400">🔎 独立复验</span> : null}
             {stats?.jevAccepted ? <span className="rounded-sm bg-canvas-bg px-1 py-px text-[9px] text-canvas-accent">⚡ 本地快筛</span> : null}
           </div>
+          {criteriaList.length > 0 && (
+            <div data-occ="criteria-report" className="mt-1.5 space-y-0.5 border-t border-canvas-border/60 pt-1.5">
+              <p className="text-[9px] text-gray-500">成功标准（行动前定义）</p>
+              {criteriaList.map((c, i) => {
+                const st = critStatus(i)
+                return (
+                  <div key={i} data-occ="criterion-item" className="flex items-start gap-1">
+                    <span
+                      className={`mt-px shrink-0 text-[9px] ${
+                        st === 'pass' ? 'text-emerald-400' : st === 'fail' ? 'text-red-400' : 'text-gray-600'
+                      }`}
+                    >
+                      {st === 'pass' ? '✓' : st === 'fail' ? '✗' : '·'}
+                    </span>
+                    <span className="text-[9px] leading-relaxed text-gray-400">{c}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 

@@ -109,6 +109,7 @@ export function initAutomation(): void {
     const logHold = async (m: string): Promise<void> => { log(m); await sleep(2500) }
     const pass = async (n: string): Promise<void> => { results.push('ok:' + n); await logHold('PASS ' + n) }
     const fail = async (n: string, why: string): Promise<void> => { results.push('FAIL:' + n); await logHold('FAIL ' + n + ' — ' + why.slice(0, 90)) }
+    let t4ChatId = '' // reused by T18 (criteria report)
 
     if (!store.getState().project) await store.getState().openProject('F:\\occ-gui-test')
     await store.getState().setEngine('native')
@@ -187,6 +188,7 @@ export function initAutomation(): void {
       await window.electronAPI.occ.updatePolicy({ toolPermission: 'ask', budgetTokensPerChat: 0 })
       const chatId = await store.getState().createChat()
       if (!chatId) throw new Error('createChat failed')
+      t4ChatId = chatId
       if (!(await waitFor(() => !!nodeTextarea(chatId), 30000))) throw new Error('textarea never mounted')
       await sendGoal(chatId, '在当前目录创建 deny.txt，内容是 should-not-exist，验证写入后报告任务完成')
       const gated = await waitFor(() => !!nodeButton(chatId, '拒绝'), 5 * 60_000)
@@ -436,7 +438,7 @@ export function initAutomation(): void {
       // T15: all-Chinese UI chrome — page, settings popover and pane menu must
       // not leak English strings (the mixed-language complaint)
       try {
-        const blacklist = ['No project open', 'New chat window', 'needs your input', 'working…', 'agents are working', 'waiting for activity', 'no content indexed yet', 'Settings', 'default model']
+        const blacklist = ['No project open', 'New chat window', 'needs your input', 'working…', 'agents are working', 'waiting for activity', 'no content indexed yet', 'Settings', 'default model', 'idle ·', 'frontier ·']
         const leaks = (): string => blacklist.find((s) => document.body.innerText.includes(s)) ?? ''
         let leak = leaks()
         if (leak) throw new Error('English chrome visible: ' + leak)
@@ -520,8 +522,21 @@ export function initAutomation(): void {
         await pass('T17 new-chat focus (card in view, width>200px)')
       } catch (e) { await fail('T17 new-chat focus', String(e)) }
 
+      // T18: evaluation-first is VISIBLE — the report card lists the planned
+      // success criteria with per-criterion PASS/FAIL from the verdict
+      try {
+        if (!t4ChatId) throw new Error('no T4 chat id')
+        const ok = await waitFor(
+          () => document.querySelectorAll('[data-node-id="' + t4ChatId + '"] [data-occ="criterion-item"]').length > 0,
+          15_000
+        )
+        if (!ok) throw new Error('criteria report not rendered on the T4 chat')
+        const n = document.querySelectorAll('[data-node-id="' + t4ChatId + '"] [data-occ="criterion-item"]').length
+        await pass('T18 criteria report (' + n + ' items)')
+      } catch (e) { await fail('T18 criteria report', String(e)) }
+
     const okCount = results.filter((r) => r.startsWith('ok')).length
-    const line = 'UX-SUMMARY ' + okCount + '/17: ' + results.join(' ')
+    const line = 'UX-SUMMARY ' + okCount + '/18: ' + results.join(' ')
     await logHold(line)
     log(line + ' ·')
     await sleep(2500)

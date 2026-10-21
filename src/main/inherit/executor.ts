@@ -1108,6 +1108,8 @@ interface RoutingRecord {
   jevAccepted?: boolean
   /** completed by the light-task fast path (no worker nodes) */
   fastPath?: boolean
+  /** success criteria defined by the planner before any action (evaluation-first) */
+  criteria?: string[]
 }
 
 function routingFile(rootDir: string): string {
@@ -1393,7 +1395,7 @@ async function runAdaptive(
     if (gate === 'cancel') {
       chat('final', '已按你的要求取消本轮执行。', undefined, cid)
       await saveFrontier(rootDir, cid, frontier)
-      saveRoutingOutcome(rootDir, { chatId: cid, shape, tasks: firstTasks(), rounds: round, outcome: 'failed', tokens: spent, wallSec: Math.round((Date.now() - pipelineStart) / 1000) })
+      saveRoutingOutcome(rootDir, { chatId: cid, shape, tasks: firstTasks(), rounds: round, outcome: 'failed', tokens: spent, wallSec: Math.round((Date.now() - pipelineStart) / 1000), criteria: planCriteria })
       return
     }
 
@@ -1547,6 +1549,7 @@ async function runAdaptive(
         shape,
         tasks: firstTasks(),
         rounds: round,
+        criteria: planCriteria,
         outcome: 'failed',
         tokens: spent,
         wallSec: Math.round((Date.now() - pipelineStart) / 1000)
@@ -1617,6 +1620,7 @@ async function runAdaptive(
         shape,
         tasks: firstTasks(),
         rounds: round,
+        criteria: planCriteria,
         outcome: 'success',
         tokens: spent,
         wallSec,
@@ -1666,7 +1670,8 @@ async function runAdaptive(
             tokens: spent,
             wallSec,
             verified: true,
-            jevAccepted: true
+            jevAccepted: true,
+            criteria: planCriteria
           })
           return
         }
@@ -1853,6 +1858,7 @@ async function runAdaptive(
         shape,
         tasks: firstTasks(),
         rounds: round,
+        criteria: planCriteria,
         outcome: verdictDone ? 'success' : 'failed',
         tokens: spent,
         wallSec,
