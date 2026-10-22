@@ -1,5 +1,6 @@
-// orch-bench runner — pipeline arm: drive OpenCodeCanvas through real tasks.
-// 每个任务：干净工作区副本 → openProject → 建聊天发目标 → 等 final → 独立脚本验收 → 结果落盘
+// orch-bench runner v2 — pipeline arm
+// 支持：feature 任务（repos 复制）+ bugfix 任务（git 复位到 bug 态）；--runs N 多次运行取方差；
+// token 成本核算（chatStats）；检查点验收（5/10 分钟采样 time-to-first-green）。
 import fs from 'fs'
 import path from 'path'
 import { spawn, spawnSync } from 'child_process'
@@ -11,38 +12,43 @@ const WORKSPACES = 'F:/occ-bench/workspaces'
 const SETTINGS = process.env.LOCALAPPDATA + '\\Temp\\occ-bench-settings'
 const CDP_PORT = '9335'
 const MODEL = 'deepseek/deepseek-chat'
+const TIMEOUT_MIN = 20
 
 const args = process.argv.slice(2)
 const only = args.includes('--tasks') ? args[args.indexOf('--tasks') + 1].split(',') : null
+const RUNS = args.includes('--runs') ? Number(args[args.indexOf('--runs') + 1]) : 1
 
 // ── collect tasks
 const tasks = []
 for (const dir of fs.readdirSync(BENCH + '/tasks')) {
-  if (!only || only.includes(dir)) {
-    const t = JSON.parse(fs.readFileSync(BENCH + '/tasks/' + dir + '/task.json', 'utf8').replace(/^\uFEFF/, ''))
-    t.verifyAbs = BENCH + '/tasks/' + dir + '/verify.py'
-    t.repoDir = path.basename(t.repo).replace(/\.git$/, '')
-    tasks.push(t)
-  }
+  if (only && !only.includes(dir)) continue
+  const raw = fs.readFileSync(BENCH + '/tasks/' + dir + '/task.json', 'utf8').replace(/^\uFEFF/, '')
+  const t = JSON.parse(raw)
+  t.verifyAbs = BENCH + '/tasks/' + dir + '/verify.py'
+  t.repoDir = path.basename(t.repo).replace(/\.git$/, '')
+  t.dir = dir
+  tasks.push(t)
 }
-console.log('tasks:', tasks.map((t) => t.id).join(', '))
+console.log('tasks:', tasks.map((t) => t.id).join(', '), '| runs per task:', RUNS)
 
 fs.mkdirSync(WORKSPACES, { recursive: true })
 fs.mkdirSync(SETTINGS, { recursive: true })
 fs.mkdirSync(BENCH + '/results', { recursive: true })
 
-// ── launch the app (automation mode)
-const app = spawn('cmd.exe', ['/c', 'npm run dev'], {
-  cwd: CANVAS,
-  env: { ...process.env, OCC_SETTINGS_DIR: SETTINGS, OCC_CDP_PORT: CDP_PORT, OCC_AUTOMATION: '1' },
-  detached: true,
-  stdio: 'ignore'
-})
+// ── launch the app（整棵进程树输出重定向：npm→electron-vite→electron 的日志全落盘，崩溃可取证）
+const app = spawn(
+    'cmd.exe',
+    ['/c', 'npm run dev >> F:\\occ-bench\\app.log 2>&1'],
+    {
+        cwd: CANVAS,
+        env: { ...process.env, OCC_SETTINGS_DIR: SETTINGS, OCC_CDP_PORT: CDP_PORT, OCC_AUTOMATION: '1' },
+        detached: true,
+        stdio: ['ignore', 'ignore', 'ignore']
+    }
+)
 console.log('app launcher pid:', app.pid)
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// ── CDP plumbing
 let page = null
 for (let i = 0; i < 150 && !page; i++) {
   try {
@@ -90,33 +96,33 @@ if (!hookReady) {
   console.log('FATAL: store hook missing')
   process.exit(1)
 }
-// policy is set per-task AFTER openProject (see loop) — requireProject() throws earlier
 
-// ── run tasks
-const summary = []
-for (const task of tasks) {
-  const wsp = WORKSPACES + '/' + task.id
-  console.log('\n=== task', task.id, '===')
+// ── workspace prep
+function prepWorkspace(task) {
+  const wsp = path.join(WORKSPACES, task.id).replace(/\//g, '\\')
+  if (task.goldCommit) {
+    // bugfix 任务：生成器已备好工作区，复位到 bug 态（源码=parent，测试=gold 版本）
+    const g = (a) => spawnSync('git', a, { cwd: wsp, encoding: 'utf8' })
+    g(['checkout', '-q', '-f', task.commit])
+    for (const tf of task.integrity) g(['checkout', '-q', '-f', task.goldCommit, '--', tf])
+    g(['clean', '-qfdx'])
+    return wsp
+  }
   fs.rmSync(wsp, { recursive: true, force: true })
-  fs.cpSync(REPOS + '/' + task.repoDir, wsp, { recursive: true })
-  const commit = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: wsp }).stdout?.toString().trim() ?? task.commit
+  fs.cpSync(path.join(REPOS, task.repoDir), wsp, { recursive: true })
+  return wsp
+}
 
-  const openRes = await jget(
-    `(async () => {
-      try {
-        await window.__occStore.getState().openProject('${wsp.replaceAll('\\', '\\\\')}')
-        const s = window.__occStore.getState()
-        return JSON.stringify({ ok: !!s.project, root: s.project?.rootDir ?? '', err: s.error ?? '' })
-      } catch (e) {
-        return JSON.stringify({ ok: false, err: String(e).slice(0, 200) })
-      }
-    })()`,
-    true
-  )
-  console.log('openProject:', openRes)
+function verifyRun(task, wsp) {
+  const v = spawnSync('python', [task.verifyAbs], { cwd: wsp, encoding: 'utf8', timeout: 300 })
+  return { ok: v.status === 0, tail: (v.stdout || '').slice(-400) }
+}
 
-  // policy AFTER openProject (requireProject() throws before any project is open)
-  const polRes = await jget(
+// ── run one task once
+async function runTask(task, runIdx) {
+  const wsp = prepWorkspace(task)
+  await jget(`await window.__occStore.getState().openProject('${wsp.replaceAll('\\', '\\\\')}').then(() => 'ok')`, true)
+  await jget(
     `(async () => {
       try {
         await window.electronAPI.occ.updatePolicy({
@@ -133,14 +139,14 @@ for (const task of tasks) {
     })()`,
     true
   )
-  console.log('policy:', polRes)
+  await sleep(800)
 
   const chatId = await jget(
     `(async () => {
       try {
         const s = window.__occStore.getState()
         const id = await s.createChat()
-        if (!id) return 'NULL:' + (s.error ?? 'no error')
+        if (!id) return 'NULL:' + (s.error ?? '')
         await s.sendChat(id, ${JSON.stringify(task.description)})
         return id
       } catch (e) {
@@ -149,63 +155,117 @@ for (const task of tasks) {
     })()`,
     true
   )
-  console.log('chat:', chatId, '| deadline:', task.timeoutMin, 'min')
+  console.log(`[${task.id} run${runIdx}] chat:`, chatId)
+  if (!chatId || chatId.startsWith('NULL') || chatId.startsWith('ERR')) {
+    return { chatId, status: 'no-chat', wallSec: 0 }
+  }
+
   const t0 = Date.now()
   let status = ''
   let finalText = ''
-  for (let i = 0; i < task.timeoutMin * 60; i++) {
+  let ttfg = null
+  let lastVerify = 0
+  let lostStreak = 0
+  const deadline = t0 + TIMEOUT_MIN * 60_000
+  while (Date.now() < deadline) {
+    await sleep(5000)
     const r = await jget(`(() => {
       const s = window.__occStore.getState()
       const log = s.chats['${chatId}'] ?? []
       const fin = [...log].reverse().find((e) => e.role === 'final')
       return JSON.stringify({ status: s.graph?.nodes['${chatId}']?.status ?? '', final: fin ? fin.text : '' })
     })()`)
+    if (r === undefined || r === null) {
+      lostStreak++
+      if (lostStreak >= 4) {
+        console.log(`[${task.id} run${runIdx}] app/store lost (${lostStreak} consecutive failed polls)`)
+        break
+      }
+      await sleep(2000)
+      continue
+    }
+    lostStreak = 0
     const o = JSON.parse(r || '{}')
     status = o.status ?? ''
-    if (o.final) {
-      finalText = o.final
-      break
+    if (o.final) finalText = o.final
+
+    // 检查点验收：5/10 分钟采样 time-to-first-green
+    const elapsed = (Date.now() - t0) / 1000
+    if (ttfg === null && (elapsed > 300 || status === 'completed') && elapsed - lastVerify > 240) {
+      lastVerify = elapsed
+      const vr = verifyRun(task, wsp)
+      if (vr.ok) ttfg = Math.round(elapsed)
+      if (status === 'completed' && vr.ok) break
     }
     if (status === 'failed') break
-    await sleep(1000)
+    if (status === 'completed') break
   }
   const wallSec = Math.round((Date.now() - t0) / 1000)
-  console.log('status:', status, '| wall:', wallSec + 's')
 
-  // integrity: existing tests untouched
-  const integrityArgs = ['diff', '--exit-code', 'HEAD', '--', ...(task.integrity ?? [])]
-  const integrity = spawnSync('git', integrityArgs, { cwd: wsp })
-  const integrityOk = integrity.status === 0
-
-  // independent verifier
-  const v = spawnSync('python', [task.verifyAbs], { cwd: wsp, encoding: 'utf8' })
-  const verifyOk = v.status === 0
-  console.log('integrity:', integrityOk, '| verify:', verifyOk)
-  console.log((v.stdout || '').split('\n').filter((l) => l.startsWith('PASS') || l.startsWith('FAIL') || l.startsWith('RESULT')).join('\n'))
-
-  const result = {
-    id: task.id,
-    arm: 'pipeline',
-    model: MODEL,
-    commit,
-    wallSec,
-    agentStatus: status,
-    selfClaimedDone: !!finalText,
-    integrityOk,
-    verifyOk,
-    pass: verifyOk && integrityOk,
-    finalTail: finalText.slice(-300),
-    verifyTail: (v.stdout || '').slice(-500),
-    ts: new Date().toISOString()
+  // tokens（子树累计，来自 routing 记录）
+  let tokens = null
+  try {
+    const statsRaw = await jget(
+      `window.electronAPI.occ.chatStats('${chatId}').then((s) => JSON.stringify(s ?? {}))`,
+      true
+    )
+    const stats = JSON.parse(statsRaw || '{}')
+    if (typeof stats.tokens === 'number') tokens = stats.tokens
+  } catch {
+    /* best-effort */
   }
-  fs.writeFileSync(BENCH + '/results/' + task.id + '.pipeline.json', JSON.stringify(result, null, 2))
-  summary.push({ id: task.id, pass: result.pass, wallSec })
+
+  // 终局验收 + 完整性（不得改动既有测试）
+  const fin = verifyRun(task, wsp)
+  const baseRef = task.goldCommit ?? 'HEAD'
+  const integ = spawnSync('git', ['diff', '--exit-code', baseRef, '--', ...(task.integrity ?? [])], {
+    cwd: wsp,
+    encoding: 'utf8'
+  })
+  const integrityOk = integ.status === 0
+  return { chatId, status, wallSec, finalText, tokens, ttfg, verifyOk: fin.ok, integrityOk, verifyTail: fin.tail }
 }
 
-fs.writeFileSync(BENCH + '/results/summary.pipeline.json', JSON.stringify(summary, null, 2))
-console.log('\nSUMMARY:', JSON.stringify(summary))
+// ── main
+const all = []
+for (const task of tasks) {
+  for (let runIdx = 1; runIdx <= RUNS; runIdx++) {
+    console.log(`\n=== ${task.id} run${runIdx} ===`)
+    let res
+    try {
+      res = await runTask(task, runIdx)
+    } catch (e) {
+      console.log('run error:', String(e).slice(0, 300))
+      continue
+    }
+    const result = {
+      id: task.id,
+      arm: 'pipeline',
+      model: MODEL,
+      run: runIdx,
+      commit: task.commit ?? '',
+      goldCommit: task.goldCommit ?? null,
+      chatId: res.chatId,
+      agentStatus: res.status,
+      wallSec: res.wallSec,
+      tokens: res.tokens,
+      ttfgSec: res.ttfg,
+      verifyOk: res.verifyOk ?? false,
+      integrityOk: res.integrityOk ?? false,
+      pass: !!(res.verifyOk && res.integrityOk),
+      finalTail: (res.finalText || '').slice(-300),
+      verifyTail: (res.verifyTail || '').slice(-400),
+      ts: new Date().toISOString()
+    }
+    fs.writeFileSync(BENCH + '/results/' + task.id + '.pipeline.r' + runIdx + '.json', JSON.stringify(result, null, 2))
+    all.push(result)
+    console.log(`[${task.id} run${runIdx}] pass=${result.pass} status=${result.agentStatus} wall=${result.wallSec}s`)
+  }
+}
 
-// stop the app
+fs.writeFileSync(BENCH + '/results/summary.pipeline.json', JSON.stringify(all, null, 2))
+console.log('\nSUMMARY:', JSON.stringify(all.map((r) => ({ id: r.id, run: r.run, pass: r.pass, wallSec: r.wallSec }))))
+
 try {
   spawnSync('taskkill', ['/PID', String(app.pid), '/T', '/F'])
 } catch {

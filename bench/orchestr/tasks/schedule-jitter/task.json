@@ -3,8 +3,10 @@
   "repo": "https://github.com/dbader/schedule",
   "commit": "82a43db",
   "description": "为 schedule 库增加抖动（jitter）支持：`every(interval).<unit>.do(job_func, *args, jitter=N)`——计划下一次运行时间时，不再固定为 interval 秒后，而是在 [interval, interval+N] 秒区间内随机取值；Job 实例需要保存 jitter 属性（默认 0，不传时行为与现在完全一致）。修改 schedule/__init__.py 中 Job 的 do 与 _schedule_next_run 实现。",
-  "timeoutMin": 15,
+  "timeoutMin": 20,
   "verify": "python verify.py",
-  "integrity": ["tests/"],
+  "integrity": [
+    "tests/"
+  ],
   "criteriaSummary": "1) do(..., jitter=N) 可用且 job.jitter==N；2) jitter=10 时 next_run 落在 [2s,12s]（30 次采样）；3) 默认 jitter=0 行为不变"
 }

@@ -52,12 +52,29 @@ async function callDeepseek(messages, timeoutMs = 420000) {
   }
 }
 
+// ── workspace prep（bugfix 任务：源码=parent，测试=gold 版本；feature 任务：干净副本）
+function prepWorkspace(task) {
+  const wsp = path.join(WORKSPACES, task.id).replace(/\//g, '\\')
+  if (task.goldCommit) {
+    const g = (a) => spawnSync('git', a, { cwd: wsp, encoding: 'utf8' })
+    if (!fs.existsSync(path.join(wsp, '.git'))) {
+      fs.mkdirSync(wsp, { recursive: true })
+      spawnSync('git', ['clone', '-q', path.join(REPOS, task.repoDir), wsp], { encoding: 'utf8' })
+    }
+    g(['checkout', '-q', '-f', task.commit])
+    for (const tf of task.integrity) g(['checkout', '-q', '-f', task.goldCommit, '--', tf])
+    g(['clean', '-qfdx'])
+    return wsp
+  }
+  fs.rmSync(wsp, { recursive: true, force: true })
+  fs.cpSync(path.join(REPOS, task.repoDir), wsp, { recursive: true })
+  return wsp
+}
+
 const summary = []
 for (const task of tasks) {
-  const wsp = WORKSPACES + '/' + task.id
+  const wsp = prepWorkspace(task)
   console.log('\n=== task', task.id, '(singleshot) ===')
-  fs.rmSync(wsp, { recursive: true, force: true })
-  fs.cpSync(REPOS + '/' + task.repoDir, wsp, { recursive: true })
 
   const tree = spawnSync('git', ['ls-files'], { cwd: wsp, encoding: 'utf8' }).stdout ?? ''
 
@@ -75,10 +92,21 @@ for (const task of tasks) {
 
   const t0 = Date.now()
   let raw = ''
+  let usage = null
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 420000)
   try {
-    raw = await callDeepseek(messages)
-  } catch (e) {
-    console.log('API error:', String(e).slice(0, 120))
+    const r = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + KEY },
+      body: JSON.stringify({ model: MODEL, messages, max_tokens: 8192, temperature: 0.2 }),
+      signal: ctrl.signal
+    })
+    const j = await r.json()
+    raw = j?.choices?.[0]?.message?.content ?? ''
+    usage = j?.usage ?? null
+  } finally {
+    clearTimeout(timer)
   }
   const wallSec = Math.round((Date.now() - t0) / 1000)
 
@@ -99,6 +127,11 @@ for (const task of tasks) {
   }
   console.log('files written:', files.length, '| wall:', wallSec + 's')
 
+  // 完整性（不得改动既有测试）
+  const baseRef = task.goldCommit ?? 'HEAD'
+  const integ = spawnSync('git', ['diff', '--exit-code', baseRef, '--', ...(task.integrity ?? [])], { cwd: wsp, encoding: 'utf8' })
+  const integrityOk = integ.status === 0
+
   const v = spawnSync('python', [task.verifyAbs], { cwd: wsp, encoding: 'utf8' })
   const verifyOk = v.status === 0
   console.log('verify:', verifyOk)
@@ -112,7 +145,9 @@ for (const task of tasks) {
     wallSec,
     filesWritten: files.length,
     verifyOk,
-    pass: verifyOk,
+    integrityOk,
+    usage,
+    pass: verifyOk && integrityOk,
     rawTail: raw.slice(-200),
     verifyTail: (v.stdout || '').slice(-500),
     ts: new Date().toISOString()

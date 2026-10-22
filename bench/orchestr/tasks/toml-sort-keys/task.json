@@ -3,8 +3,10 @@
   "repo": "https://github.com/uiri/toml",
   "commit": "65bab75",
   "description": "为 toml 库（uiri/toml，toml/encoder.py 与 toml/toml.py）增加键排序支持：`toml.dump(data, f, sort_keys=True)` 与 `toml.dumps(data, sort_keys=True)`——启用后顶层与嵌套表的键都按字典序输出。注意 TOML 语义要求标量键先于表头（`[table]` 之后的键属于该表），排序时必须保持这一结构约束；不传 sort_keys（默认 False）时保持现有插入序行为不变。",
-  "timeoutMin": 15,
+  "timeoutMin": 20,
   "verify": "python verify.py",
-  "integrity": ["tests/"],
+  "integrity": [
+    "tests/"
+  ],
   "criteriaSummary": "1) 默认行为不变（b 在最前、嵌套保持插入序）；2) sort_keys=True 后 [a] 节内 c 在 d 前（嵌套排序）；3) 标量 b 仍在表头之前（TOML 语义）；4) dump 到文件同样生效"
 }

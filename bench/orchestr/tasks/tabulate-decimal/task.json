@@ -1,0 +1,18 @@
+{
+  "id": "tabulate-decimal",
+  "repo": "https://github.com/astanin/python-tabulate",
+  "commit": "8f3208666",
+  "goldCommit": "5373ebfa9",
+  "description": "tabulate 对 decimal.Decimal 类型的值使用 floatfmt 时输出不遵循定点格式（表现为默认 str 形式）。请修复：Decimal 值应像 float 一样遵循 floatfmt 的定点格式化；非数值 Decimal（如 NaN/Infinity）行为保持合理。",
+  "timeoutMin": 20,
+  "verify": "python verify.py",
+  "integrity": [
+    "test/test_output.py"
+  ],
+  "workspace": "F:\\occ-bench\\workspaces\\tabulate-decimal",
+  "preBroken": [],
+  "failToPass": [
+    "test/test_output.py::test_floatfmt_decimal"
+  ],
+  "criteriaSummary": "FAIL_TO_PASS ['test/test_output.py::test_floatfmt_decimal'] | PASS_TO_PASS 豁免 []"
+}

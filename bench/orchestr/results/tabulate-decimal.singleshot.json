@@ -1,0 +1,24 @@
+{
+  "id": "tabulate-decimal",
+  "arm": "singleshot",
+  "model": "deepseek-chat",
+  "commit": "8f32086",
+  "wallSec": 25,
+  "filesWritten": 0,
+  "verifyOk": false,
+  "integrityOk": true,
+  "usage": {
+    "prompt_tokens": 270,
+    "completion_tokens": 8192,
+    "total_tokens": 8462,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 270
+  },
+  "pass": false,
+  "rawTail": " account.\\n\\n    >>> _visible_width_widechar('\\\\x1b[31mhello\\\\x1b[0m')\\n    5\\n    >>> _visible_width_widechar('abc')\\n    3\\n    \\\"\\\"\\\"\\n    if isinstance(s, (str, bytes)):\\n        s = _strip_ansi(s",
+  "verifyTail": "== result\r\n               ^^^^^^^^^^^^^^^^^^\r\nE       AssertionError\r\n\r\ntest\\common.py:9: AssertionError\r\n---------------------------- Captured stdout call -----------------------------\r\nExpected:\r\n'99999998999.999980  1234.500000  1.234568  inf'\r\n\r\nGot:\r\n'99999998999.999985  1234.500000  1.234568  inf'\r\n\r\n=========================== short test summary info ===========================\r\nFAILED test/test_output.py::test_floatfmt_decimal - AssertionError\r\n1 failed, 177 passed, 21 skipped in 0.38s\r\n",
+  "ts": "2026-10-22T05:49:49.417Z"
+}

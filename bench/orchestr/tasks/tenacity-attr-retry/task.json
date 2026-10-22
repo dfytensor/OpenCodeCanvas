@@ -3,8 +3,10 @@
   "repo": "https://github.com/jd/tenacity",
   "commit": "32ac68f",
   "description": "为 tenacity 新增两个重试条件类：`retry_if_exception_attribute(attribute_name, value)`（当异常具有名为 attribute_name 的属性、且其值等于 value 时重试）与 `retry_if_not_exception_attribute(attribute_name, value)`（相反条件）。实现放在 tenacity/retry.py，代码风格与现有 retry_if_exception_message 保持一致，并在 tenacity/__init__.py 中导出这两个名字。",
-  "timeoutMin": 15,
+  "timeoutMin": 20,
   "verify": "python verify.py",
-  "integrity": ["tenacity/test_*.py"],
+  "integrity": [
+    "tenacity/test_*.py"
+  ],
   "criteriaSummary": "1) retry.retry_if_exception_attribute / retry_if_not_exception_attribute 存在；2) 顶层导出；3) code==42 时 retry_if_exception_attribute 重试至属性改变；4) retry_if_not_exception_attribute 对满足条件者不重试"
 }

@@ -1,22 +1,21 @@
 [
   {
-    "id": "tablib-sort-by",
+    "id": "tabulate-decimal",
+    "arm": "pipeline",
+    "model": "deepseek/deepseek-chat",
+    "run": 1,
+    "commit": "8f3208666",
+    "goldCommit": "5373ebfa9",
+    "chatId": "WvLFHx1Jm2",
+    "agentStatus": "running",
+    "wallSec": 1202,
+    "tokens": null,
+    "ttfgSec": null,
+    "verifyOk": false,
+    "integrityOk": true,
     "pass": false,
-    "wallSec": 924
-  },
-  {
-    "id": "tabulate-encoding",
-    "pass": false,
-    "wallSec": 927
-  },
-  {
-    "id": "tabulate-transpose",
-    "pass": false,
-    "wallSec": 925
-  },
-  {
-    "id": "toml-sort-keys",
-    "pass": false,
-    "wallSec": 939
+    "finalTail": "",
+    "verifyTail": "",
+    "ts": "2026-10-22T07:12:05.099Z"
   }
 ]

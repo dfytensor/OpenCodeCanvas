@@ -1,22 +1,7 @@
 [
   {
-    "id": "tablib-sort-by",
+    "id": "tabulate-decimal",
     "pass": false,
-    "wallSec": 20
-  },
-  {
-    "id": "tabulate-encoding",
-    "pass": false,
-    "wallSec": 4
-  },
-  {
-    "id": "tabulate-transpose",
-    "pass": false,
-    "wallSec": 4
-  },
-  {
-    "id": "toml-sort-keys",
-    "pass": false,
-    "wallSec": 23
+    "wallSec": 25
   }
 ]

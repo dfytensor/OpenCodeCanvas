@@ -3,8 +3,10 @@
   "repo": "https://github.com/astanin/python-tabulate",
   "commit": "268615a",
   "description": "为 tabulate 的命令行工具（tabulate/cli.py）新增转置功能：添加 `-t` / `--transpose` 开关，启用后把输入数据的行列互换后再打印（此时忽略 --headers 相关处理，首行也按数据行参与转置）。同时在 cli.py 的 usage 文档里补充该选项说明。",
-  "timeoutMin": 15,
+  "timeoutMin": 20,
   "verify": "python verify.py",
-  "integrity": ["test/"],
+  "integrity": [
+    "test/"
+  ],
   "criteriaSummary": "1) CLI 帮助出现 --transpose；2) 2×3 输入转置为 3×2 输出（值位置精确匹配）；3) 未加 -t 时行为与现在完全一致"
 }

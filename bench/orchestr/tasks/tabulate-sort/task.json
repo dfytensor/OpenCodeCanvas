@@ -3,8 +3,10 @@
   "repo": "https://github.com/astanin/python-tabulate",
   "commit": "268615a",
   "description": "为 tabulate 的命令行工具（tabulate/cli.py，入口 python -m tabulate）新增排序功能：添加 `-S COLUMN` / `--sort COLUMN` 选项（COLUMN 为 0 起始的列号），在打印前按该列对数据行做稳定的字符串排序；未显式指定 --headers 时首行也是数据行、同样参与排序；不指定 --sort 时行为与现在完全一致。同时在 cli.py 的 usage 文档里补充该选项说明。完成后确保 `python -m tabulate --read csv --sort 0 --format plain <file>` 正常工作。",
-  "timeoutMin": 15,
+  "timeoutMin": 20,
   "verify": "python verify.py",
-  "integrity": ["test/"],
+  "integrity": [
+    "test/"
+  ],
   "criteriaSummary": "1) CLI 帮助出现 --sort；2) --read csv --sort 0 输出行按第 0 列有序；3) 短选项 -S 按第 1 列有序；4) 未改动既有测试"
 }
