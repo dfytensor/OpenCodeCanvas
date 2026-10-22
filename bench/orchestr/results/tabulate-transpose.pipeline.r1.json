@@ -1,0 +1,19 @@
+{
+  "id": "tabulate-transpose",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "run": 1,
+  "commit": "268615a",
+  "goldCommit": null,
+  "chatId": "Z8mkT3xZVe",
+  "agentStatus": "completed",
+  "wallSec": 606,
+  "tokens": 217434,
+  "ttfgSec": null,
+  "verifyOk": false,
+  "integrityOk": true,
+  "pass": false,
+  "finalTail": "所有 worker 失败 — 管线停止",
+  "verifyTail": "",
+  "ts": "2026-10-22T07:47:45.171Z"
+}

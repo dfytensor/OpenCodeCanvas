@@ -1,0 +1,19 @@
+{
+  "id": "toml-sort-keys",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "run": 1,
+  "commit": "65bab75",
+  "goldCommit": null,
+  "chatId": "bmQgIrCWSp",
+  "agentStatus": "running",
+  "wallSec": 1201,
+  "tokens": null,
+  "ttfgSec": null,
+  "verifyOk": false,
+  "integrityOk": true,
+  "pass": false,
+  "finalTail": "",
+  "verifyTail": "PASS 默认：b = 1 在最前\r\nPASS 默认：嵌套保持插入序（d 在 c 前）\r\n",
+  "ts": "2026-10-22T08:07:52.556Z"
+}
