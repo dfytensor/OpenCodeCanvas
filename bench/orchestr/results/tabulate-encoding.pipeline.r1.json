@@ -5,15 +5,16 @@
   "run": 1,
   "commit": "268615a",
   "goldCommit": null,
-  "chatId": "r7rAtMnNAX",
+  "chatId": "gWtTEw9QYK",
   "agentStatus": "completed",
-  "wallSec": 605,
-  "tokens": 110358,
+  "wallSec": 447,
+  "tokens": 80909,
   "ttfgSec": null,
   "verifyOk": false,
   "integrityOk": true,
   "pass": false,
+  "detail": "",
   "finalTail": "所有 worker 失败 — 管线停止",
   "verifyTail": "",
-  "ts": "2026-10-22T07:37:36.898Z"
+  "ts": "2026-10-23T10:20:57.096Z"
 }
