@@ -575,6 +575,26 @@ function compactHistory(messages: AgentMessage[], scratchpadPath?: string): void
     }
   }
   if (compacted > 0) {
+    // re-injection must never land between an assistant(tool_calls) turn and
+    // its tool responses — strict providers (deepseek 等) reject the pairing
+    // with HTTP 400 "insufficient tool messages following tool_calls" and the
+    // worker dies mid-flight. Tool results of one assistant turn are stored
+    // contiguously right after it, so advance the insertion point past any
+    // unclosed pair at the boundary.
+    let at = stop
+    while (at < messages.length) {
+      const m = messages[at]
+      if (m.role === 'tool') {
+        at++
+        continue
+      }
+      if (m.role === 'assistant' && (m.tool_calls?.length ?? 0) > 0) {
+        at++
+        while (at < messages.length && messages[at].role === 'tool') at++
+        continue
+      }
+      break
+    }
     // working-memory re-injection: the plan lives in notes.md, not the
     // transcript — hand it back right where older context was stubbed
     if (scratchpadPath) {
@@ -586,10 +606,10 @@ function compactHistory(messages: AgentMessage[], scratchpadPath?: string): void
             role: 'user',
             content: `[工作记忆恢复] 对话早段已被压实。你的工作笔记（notes.md）当前内容：\n${note}\n（以此为准继续；笔记过时请先更新它）`
           }
-          messages.splice(stop, 0, reinject)
+          messages.splice(at, 0, reinject)
         }
       } catch { /* no notes yet — fine */ }
     }
-    trace(`compactHistory: stubbed ${compacted} tool results, chars ${estChars(messages)}`)
+    trace(`compactHistory: stubbed ${compacted} tool results, re-inject at ${at}/${messages.length}, chars ${estChars(messages)}`)
   }
 }

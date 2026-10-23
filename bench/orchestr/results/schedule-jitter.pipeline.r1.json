@@ -1,0 +1,20 @@
+{
+  "id": "schedule-jitter",
+  "arm": "pipeline",
+  "model": "deepseek/deepseek-chat",
+  "run": 1,
+  "commit": "82a43db",
+  "goldCommit": null,
+  "chatId": "UAkfXsREwb",
+  "agentStatus": "completed",
+  "wallSec": 582,
+  "tokens": 4174326,
+  "ttfgSec": 301,
+  "verifyOk": true,
+  "integrityOk": true,
+  "pass": true,
+  "detail": "",
+  "finalTail": "：重复 30 次，断言 delta 恒等于 `2`（严格等于，含 0 微秒偏差），确认默认行为与改动前完全一致。\n3. 附加：`every(1).minutes.do(f, jitter=5)` 采样 10 次，断言 delta 落在 `[60, 65]` 秒，用以排除“jitter 被 unit 缩放”的回归。\n4. 附加：运行既有 `python -m pytest test_schedule.py -q`，确认无回归。\n若第 1–3 项全部满足且第 4 项无新增失败，则标准2 可判 PASS，目标达成。\n\nFITNESS: 0.72\n\n（已合并 1 个 worker 工作区到项目根目录）",
+  "verifyTail": "PASS every().do(..., jitter=N) 可用且保存为 job.jitter\r\nPASS jitter=10 时 next_run ∈ [2s, 12.5s]（30 次采样）\r\nPASS 默认无 jitter：next_run ≈ interval（5s ± 2s）\r\nRESULT: PASS\r\n",
+  "ts": "2026-10-23T13:07:33.739Z"
+}
