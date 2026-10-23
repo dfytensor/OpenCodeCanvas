@@ -156,6 +156,8 @@ export interface ProjectPolicy {
   maxRounds: number
   /** per-worker agent-loop tool-step cap */
   maxStepsPerNode: number
+  /** skip the light-task fast path and always run the full pipeline (复杂任务/benchmark 用) */
+  disableFastPath?: boolean
 }
 
 export const DEFAULT_POLICY: ProjectPolicy = {

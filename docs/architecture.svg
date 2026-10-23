@@ -1,0 +1,252 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 1200" font-family="Microsoft YaHei, PingFang SC, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#6e7a87"/>
+    </marker>
+    <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#a371f7"/>
+    </marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#3fb950"/>
+    </marker>
+  </defs>
+
+  <rect width="1560" height="1200" fill="#0d1117"/>
+  <text x="44" y="44" font-size="26" font-weight="bold" fill="#e6edf3">OpenCodeCanvas 2.0 · 项目级编排 Agent 系统 · 架构图</text>
+  <text x="44" y="68" font-size="13" fill="#8b949e">画布即工作台：每次对话 = 一个可继承的节点，繁重工作 fork 出去，独立验收员把关，图谱落盘为唯一事实源</text>
+
+  <!-- ================= Row A: Renderer ================= -->
+  <rect x="40" y="84" width="1140" height="180" rx="12" fill="#10161d" stroke="#30363d"/>
+  <text x="60" y="112" font-size="15" font-weight="bold" fill="#79c0ff">渲染层 Renderer · React 18 + React Flow + zustand</text>
+
+  <rect x="60" y="128" width="300" height="118" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="74" y="150" font-size="13" font-weight="bold" fill="#e6edf3">图形画布 · GraphCanvas.tsx</text>
+  <text x="74" y="172" font-size="11" fill="#9aa7b4">节点卡 ChatNode(状态点/运行条/轮次折叠)</text>
+  <text x="74" y="188" font-size="11" fill="#9aa7b4">OccNode(diff/inspect/apply 按钮)</text>
+  <text x="74" y="204" font-size="11" fill="#9aa7b4">边样式: fork 紫 · inherit 蓝 · merge 绿</text>
+  <text x="74" y="220" font-size="11" fill="#9aa7b4">layout.ts 落位/持久 pin/休眠层/镜头策略</text>
+
+  <rect x="380" y="128" width="300" height="118" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="394" y="150" font-size="13" font-weight="bold" fill="#e6edf3">zustand occStore.ts</text>
+  <text x="394" y="172" font-size="11" fill="#9aa7b4">slices: chats · graph · models</text>
+  <text x="394" y="188" font-size="11" fill="#9aa7b4">streams(流式) · policy · eventLog · inspectCache</text>
+  <text x="394" y="204" font-size="11" fill="#9aa7b4">actions: openProject / createChat / sendChat</text>
+  <text x="394" y="220" font-size="11" fill="#9aa7b4">updatePolicy / freeze / apply / abort</text>
+  <text x="394" y="236" font-size="10" fill="#6e7a87">窗口暴露 window.__occStore（自动化用）</text>
+
+  <rect x="700" y="128" width="212" height="118" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="714" y="150" font-size="13" font-weight="bold" fill="#e6edf3">GUI 自动化 automation.ts</text>
+  <text x="714" y="172" font-size="11" fill="#9aa7b4">?auto=1 有 &amp;suite= → 套件 T1–T20</text>
+  <text x="714" y="188" font-size="11" fill="#9aa7b4">无 suite= → 观察模式(只开 store)</text>
+  <text x="714" y="204" font-size="11" fill="#9aa7b4">结果经 document.title</text>
+  <text x="714" y="220" font-size="11" fill="#9aa7b4">OCC-AUTOTEST: → 回落 %TEMP%</text>
+
+  <rect x="932" y="128" width="228" height="118" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="946" y="150" font-size="13" font-weight="bold" fill="#e6edf3">事件流与周边</text>
+  <text x="946" y="172" font-size="11" fill="#9aa7b4">EventStream 实时追加</text>
+  <text x="946" y="188" font-size="11" fill="#9aa7b4">TopBar(策略) · ChatSidebar · Onboarding</text>
+  <text x="946" y="204" font-size="11" fill="#9aa7b4">DiffModal · Toasts · InheritWizard</text>
+  <text x="946" y="220" font-size="11" fill="#9aa7b4">报告卡逐条 ✓/✗ · HUD 中文化</text>
+
+  <line x1="380" y1="188" x2="364" y2="188" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="932" y1="188" x2="684" y2="188" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ================= IPC arrows ================= -->
+  <line x1="420" y1="264" x2="420" y2="300" stroke="#58a6ff" stroke-width="2" marker-end="url(#arrB)"/>
+  <text x="312" y="288" font-size="11.5" fill="#58a6ff">ipc 调用 electronAPI.occ:* (~45 通道)</text>
+  <line x1="860" y1="300" x2="860" y2="264" stroke="#3fb950" stroke-width="2" marker-end="url(#arrG)"/>
+  <text x="872" y="288" font-size="11.5" fill="#3fb950">occ:event 推送 (pipeline.chat / node.changed)</text>
+
+  <!-- ================= Row B: Main ================= -->
+  <rect x="40" y="304" width="1140" height="474" rx="12" fill="#10161d" stroke="#30363d"/>
+  <text x="60" y="332" font-size="15" font-weight="bold" fill="#d2a8ff">主进程 Main · Node/Electron</text>
+
+  <!-- executor -->
+  <rect x="60" y="344" width="560" height="414" rx="8" fill="#151b23" stroke="#6e40c9"/>
+  <text x="76" y="368" font-size="13.5" font-weight="bold" fill="#d2a8ff">编排核心 inherit/executor.ts（~2k 行）</text>
+
+  <rect x="76" y="380" width="250" height="42" rx="6" fill="#1b2130" stroke="#3a4453"/>
+  <text x="86" y="398" font-size="11" fill="#e6edf3">1 · 快路径 tryFast（秒级）</text>
+  <text x="86" y="414" font-size="10" fill="#8b949e">仅新文件 ≤4 + 语法门；disableFastPath 关闭</text>
+
+  <rect x="76" y="434" width="250" height="34" rx="6" fill="#1b2130" stroke="#3a4453"/>
+  <text x="86" y="456" font-size="11" fill="#e6edf3">2 · Jev 路由 answered | build</text>
+
+  <rect x="76" y="482" width="250" height="42" rx="6" fill="#1b2130" stroke="#3a4453"/>
+  <text x="86" y="500" font-size="11" fill="#e6edf3">3 · 规划 planGoal：JSON-DAG</text>
+  <text x="86" y="516" font-size="10" fill="#8b949e">tasks[]·depends_on→波次·success_criteria</text>
+
+  <rect x="350" y="380" width="254" height="144" rx="6" fill="#1b2130" stroke="#3a4453"/>
+  <text x="360" y="398" font-size="11" fill="#e6edf3">4 · 轮次循环 runAdaptive</text>
+  <text x="360" y="416" font-size="10" fill="#8b949e">预算门 → 轮快照 round-* → 变异体竞争</text>
+  <text x="360" y="432" font-size="10" fill="#8b949e">K=3 策略 A/B/C（可用模型交织取）</text>
+  <text x="360" y="448" font-size="10" fill="#8b949e">createInheritNode(fork)+BB_HINT 黑板</text>
+  <text x="360" y="464" font-size="10" fill="#8b949e">waitTerminal → 波次合并 applyNode</text>
+  <text x="360" y="480" font-size="10" fill="#8b949e">黑板合并 → 缺件闭包 → 收敛守卫</text>
+  <text x="360" y="500" font-size="10" fill="#8b949e">经验调整 experienceAdjust·自策略 vN</text>
+  <text x="360" y="516" font-size="10" fill="#8b949e">verifier-skip 学习(≥3 全对→跳验收)</text>
+
+  <rect x="76" y="558" width="528" height="76" rx="6" fill="#12261a" stroke="#2ea04366"/>
+  <text x="92" y="580" font-size="11.5" font-weight="bold" fill="#3fb950">5 · 验收级联（便宜→贵）</text>
+  <text x="92" y="600" font-size="11" fill="#cde2d1">Jev 概率 ≥0.85 放行 → 独立验收员(merge+verify·VERDICT/ FITNESS/逐条 PASS|FAIL)</text>
+  <text x="92" y="618" font-size="11" fill="#cde2d1">→ 低置信(fitness&lt;0.6)跨模型复核 → 未过题回炉/变异体重跑</text>
+
+  <rect x="76" y="650" width="528" height="88" rx="6" fill="#1b2130" stroke="#3a4453"/>
+  <text x="92" y="672" font-size="11.5" font-weight="bold" fill="#e6edf3">6 · 落盘与学习</text>
+  <text x="92" y="692" font-size="10.5" fill="#8b949e">STATE.md 滚动 · routing.jsonl 记录(判据/fitness/tokens/wall)</text>
+  <text x="92" y="708" font-size="10.5" fill="#8b949e">decisions.jsonl 决策外置 · self-policy.json 自策略 · 最终回复交聊天网关</text>
+  <text x="92" y="724" font-size="10.5" fill="#8b949e">路由史喂给下一轮 experienceAdjust（就在本函数里闭环）</text>
+
+  <line x1="201" y1="422" x2="201" y2="432" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="201" y1="468" x2="201" y2="480" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="326" y1="452" x2="348" y2="452" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="477" y1="524" x2="477" y2="556" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="340" y1="634" x2="340" y2="648" stroke="#3f8f5b" stroke-width="1.5" marker-end="url(#arrG)"/>
+
+  <!-- right column of main -->
+  <rect x="640" y="344" width="520" height="120" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="656" y="366" font-size="13" font-weight="bold" fill="#58a6ff">会话双引擎 channels.ts / agent/*</text>
+  <text x="656" y="388" font-size="11" fill="#9aa7b4">opencode 引擎：托管 opencode serve 单例 · SSE 订阅</text>
+  <text x="656" y="404" font-size="11" fill="#9aa7b4">＋ 事件核对轮询 · ocApi(promptAsync/abort/fork…)</text>
+  <text x="656" y="424" font-size="11" fill="#9aa7b4">native 引擎：agt_ 前缀 · loop.ts 自带工具循环</text>
+  <text x="656" y="440" font-size="11" fill="#9aa7b4">net.fetch 4 重试[0,3,10,30s] · 工具5件 · 敏感工具权限门</text>
+  <line x1="940" y1="464" x2="940" y2="482" stroke="#6e7a87" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="640" y="486" width="520" height="86" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="656" y="508" font-size="13" font-weight="bold" fill="#f0883e">模型接入 providers.ts + jev.ts</text>
+  <text x="656" y="528" font-size="11" fill="#9aa7b4">deepseek · zhipu(glm-4.6/4.5-air) · opencode.json 自定义（key 在 auth.json）</text>
+  <text x="656" y="544" font-size="11" fill="#9aa7b4">failover 链 resolveAgentModelChain（429/错误逐级回退）</text>
+  <text x="656" y="560" font-size="11" fill="#9aa7b4">Jev 决策：本地 llama-server(自托管) → OpenRouter jev-1.13 → 级联</text>
+
+  <rect x="640" y="592" width="520" height="62" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="656" y="612" font-size="13" font-weight="bold" fill="#3fb950">验证执行 verify/ + workspace/</text>
+  <text x="656" y="630" font-size="11" fill="#9aa7b4">diff → 外部测试 → Goodhart 检测 → applyCopyChanges · verifiedApply 门</text>
+  <text x="656" y="646" font-size="11" fill="#9aa7b4">实现了 coder 不能自批 · GoodhartTracker(5,0.3) · 冲突落 CONFLICT.md</text>
+
+  <rect x="640" y="674" width="520" height="66" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="656" y="694" font-size="13" font-weight="bold" fill="#e6edf3">聊天网关 chat.ts</text>
+  <text x="656" y="712" font-size="11" fill="#9aa7b4">权限问询/预算确认正则裁决 · busy 守卫 · 多轮从 frontierId 续</text>
+  <text x="656" y="728" font-size="11" fill="#9aa7b4">每次 pipeline.chat → chat.jsonl；final 事件 → 节点置 completed</text>
+
+  <line x1="620" y1="400" x2="638" y2="398" stroke="#a371f7" stroke-width="2" marker-end="url(#arrP)"/>
+  <text x="566" y="392" font-size="10" fill="#a371f7">spawn/直到终态</text>
+  <line x1="620" y1="600" x2="638" y2="600" stroke="#3fb950" stroke-width="2" marker-end="url(#arrG)"/>
+  <text x="584" y="592" font-size="10" fill="#3fb950">验收门</text>
+
+  <!-- ================= Row C: workspace ================= -->
+  <rect x="40" y="800" width="1140" height="196" rx="12" fill="#10161d" stroke="#30363d"/>
+  <text x="60" y="828" font-size="15" font-weight="bold" fill="#f0883e">每项目工作区 · &lt;root&gt;/.occ/（内容寻址 snapshot + 原子写）</text>
+
+  <rect x="60" y="844" width="212" height="106" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="72" y="866" font-size="12" font-weight="bold" fill="#e6edf3">graph.json</text>
+  <text x="72" y="884" font-size="10.5" fill="#9aa7b4">图谱唯一事实源(追加只写)</text>
+  <text x="72" y="900" font-size="10.5" fill="#9aa7b4">project.json 含 policy</text>
+  <text x="72" y="916" font-size="10.5" fill="#9aa7b4">stateMachine 状态机管转移</text>
+  <text x="72" y="932" font-size="10.5" fill="#9aa7b4">events.ts = 全局事件骨干</text>
+
+  <rect x="282" y="844" width="212" height="106" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="294" y="866" font-size="12" font-weight="bold" fill="#e6edf3">nodes/&lt;id&gt;/</text>
+  <text x="294" y="884" font-size="10.5" fill="#9aa7b4">copy 工作树 · snapshot 钉版</text>
+  <text x="294" y="900" font-size="10.5" fill="#9aa7b4">context 抽取 · artifacts 产物</text>
+  <text x="294" y="916" font-size="10.5" fill="#9aa7b4">chat.jsonl · agent.jsonl 流水</text>
+  <text x="294" y="932" font-size="10.5" fill="#9aa7b4">被污染(suspicious/confirmed)→阻断继承</text>
+
+  <rect x="504" y="844" width="212" height="106" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="516" y="866" font-size="12" font-weight="bold" fill="#e6edf3">snapshots/ + summaries/</text>
+  <text x="516" y="884" font-size="10.5" fill="#9aa7b4">round-* 每轮共享基准</text>
+  <text x="516" y="900" font-size="10.5" fill="#9aa7b4">内容哈希 hashDirFast 定位</text>
+  <text x="516" y="916" font-size="10.5" fill="#9aa7b4">archive/rehydrate 存档</text>
+  <text x="516" y="932" font-size="10.5" fill="#9aa7b4">server.json 状态恢复</text>
+
+  <rect x="726" y="844" width="212" height="106" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="738" y="866" font-size="12" font-weight="bold" fill="#e6edf3">orchestrator/</text>
+  <text x="738" y="884" font-size="10.5" fill="#9aa7b4">decisions.jsonl 决策外置</text>
+  <text x="738" y="900" font-size="10.5" fill="#9aa7b4">routing.jsonl 路由史(含判据/成本)</text>
+  <text x="738" y="916" font-size="10.5" fill="#9aa7b4">self-policy.json 自策略 vN</text>
+  <text x="738" y="932" font-size="10.5" fill="#9aa7b4">本轮经验 ≠ 下一轮起点</text>
+
+  <rect x="948" y="844" width="212" height="106" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="960" y="866" font-size="12" font-weight="bold" fill="#e6edf3">根记忆</text>
+  <text x="960" y="884" font-size="10.5" fill="#9aa7b4">BLACKBOARD.md 工蚁便签</text>
+  <text x="960" y="900" font-size="10.5" fill="#9aa7b4">STATE.md 滚动项目状态</text>
+  <text x="960" y="916" font-size="10.5" fill="#9aa7b4">CONTEXT.md 用户策展 · skills/ 能力</text>
+  <text x="960" y="932" font-size="10.5" fill="#9aa7b4">entities.jsonl 引用消解</text>
+
+  <text x="60" y="976" font-size="10.5" fill="#6e7a87">全局： ~/.occ-settings.json（OCC_SETTINGS_DIR 可指向临时目录）· provider keys 复用 opencode 的 auth.json / opencode.json</text>
+
+  <line x1="420" y1="778" x2="420" y2="798" stroke="#6e7a87" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="300" y="794" font-size="10.5" fill="#8b949e">graph.json / chat.jsonl / routing 原子写</text>
+  <line x1="820" y1="798" x2="820" y2="780" stroke="#6e7a87" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="832" y="794" font-size="10.5" fill="#8b949e">启动即回读（续作）</text>
+
+  <!-- ================= Bench rail ================= -->
+  <rect x="1204" y="84" width="320" height="912" rx="12" fill="#10161d" stroke="#a371f766"/>
+  <text x="1224" y="112" font-size="15" font-weight="bold" fill="#a371f7">orch-bench · bench/orchestr</text>
+
+  <rect x="1220" y="128" width="288" height="110" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="1232" y="150" font-size="12" font-weight="bold" fill="#e6edf3">runner.mjs（管线臂）</text>
+  <text x="1232" y="170" font-size="10.5" fill="#9aa7b4">spawn 本应用 OCC_CDP_PORT=9335</text>
+  <text x="1232" y="186" font-size="10.5" fill="#9aa7b4">CDP Runtime.evaluate 驱动真实界面</text>
+  <text x="1232" y="202" font-size="10.5" fill="#9aa7b4">同一模型 · 同一 key · 关快路径</text>
+  <text x="1232" y="218" font-size="10.5" fill="#9aa7b4">--runs N 方差 · 每 5s 轮询状态</text>
+
+  <rect x="1220" y="250" width="288" height="96" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="1232" y="272" font-size="12" font-weight="bold" fill="#e6edf3">驱动序列</text>
+  <text x="1232" y="292" font-size="10.5" fill="#9aa7b4">openProject(workspaces/任务)</text>
+  <text x="1232" y="308" font-size="10.5" fill="#9aa7b4">updatePolicy(engine=native·disableFastPath)</text>
+  <text x="1232" y="324" font-size="10.5" fill="#9aa7b4">createChat → sendChat(任务描述)</text>
+  <text x="1232" y="340" font-size="10.5" fill="#9aa7b4">5/10min 检查点验收 · ChatStats 记成本</text>
+
+  <rect x="1220" y="358" width="288" height="96" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="1232" y="380" font-size="12" font-weight="bold" fill="#e6edf3">singleshot.mjs（基线臂）</text>
+  <text x="1232" y="400" font-size="10.5" fill="#9aa7b4">不开应用：一次直调 DeepSeek</text>
+  <text x="1232" y="416" font-size="10.5" fill="#9aa7b4">git ls-files 清单 + 任务 → 严格 JSON</text>
+  <text x="1232" y="432" font-size="10.5" fill="#9aa7b4">同工作区落文件 · 同一套验收</text>
+
+  <rect x="1220" y="466" width="288" height="110" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="1232" y="488" font-size="12" font-weight="bold" fill="#3fb950">独立验收 · tasks/&lt;id&gt;/verify.py</text>
+  <text x="1232" y="508" font-size="10.5" fill="#9aa7b4">判据先于运行定义，独立于 agent 工作区</text>
+  <text x="1232" y="524" font-size="10.5" fill="#9aa7b4">FAIL_TO_PASS（bugfix 金补丁测试）</text>
+  <text x="1232" y="540" font-size="10.5" fill="#9aa7b4">PASS_TO_PASS 豁免环境预置失败</text>
+  <text x="1232" y="556" font-size="10.5" fill="#9aa7b4">完整性：git diff 既有测试 ⇒ 改考卷=FAIL</text>
+
+  <rect x="1220" y="588" width="288" height="92" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="1232" y="610" font-size="12" font-weight="bold" fill="#e6edf3">计分</text>
+  <text x="1232" y="630" font-size="10.5" fill="#9aa7b4">tokens 成本/chatStats · wallSec · ttfg</text>
+  <text x="1232" y="646" font-size="10.5" fill="#9aa7b4">results/*.json 全量公开(含失败)</text>
+  <text x="1232" y="662" font-size="10.5" fill="#9aa7b4">summary.md / docs/BENCHMARK.md</text>
+
+  <rect x="1220" y="692" width="288" height="120" rx="8" fill="#151b23" stroke="#2f3841"/>
+  <text x="1232" y="714" font-size="12" font-weight="bold" fill="#e6edf3">素材</text>
+  <text x="1232" y="734" font-size="10.5" fill="#9aa7b4">F:\occ-bench\repos 5 仓库克隆(含 history)</text>
+  <text x="1232" y="750" font-size="10.5" fill="#9aa7b4">workspaces/&lt;task&gt; 每轮重建/复位到 bug 态</text>
+  <text x="1232" y="766" font-size="10.5" fill="#9aa7b4">SWE-bench 式筛除无 FAIL_TO_PASS 候选</text>
+  <text x="1232" y="782" font-size="10.5" fill="#9aa7b4">10 选 1：tabulate-decimal 可度量通过</text>
+  <text x="1232" y="798" font-size="10.5" fill="#9aa7b4">app.log 崩溃取证</text>
+
+  <line x1="1204" y1="170" x2="1184" y2="172" stroke="#a371f7" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrP)"/>
+  <text x="1188" y="152" font-size="10" fill="#a371f7" transform="rotate(0)">CDP 驱动</text>
+
+  <!-- ================= Notes ================= -->
+  <rect x="40" y="1016" width="1140" height="120" rx="12" fill="#081018" stroke="#21262d"/>
+  <text x="60" y="1042" font-size="13" font-weight="bold" fill="#e6edf3">架构注记</text>
+  <text x="60" y="1064" font-size="11" fill="#8b949e">· 事件主干：跨模块交互统一走 events.ts 的 occ:event —— 渲染层、聊天日志、Jev 校准共用同一份数据流</text>
+  <text x="60" y="1082" font-size="11" fill="#8b949e">· 引擎判别：会话 id 前缀 agt_ 即 native（session.ts），否则为 opencode 会话；native 无需 opencode 服务也可全功能运行</text>
+  <text x="60" y="1100" font-size="11" fill="#8b949e">· 单点风险：executor.ts 一文件集中规划/快路径/轮次/验收/自策略；ipc.ts 是唯一 IPC 面（治理拆分是下一步）</text>
+  <text x="60" y="1118" font-size="11" fill="#8b949e">· 成本阶梯：快路径(秒) ≪ 单轮(分) ≪ 变异体竞争轮 ≪ 跨模型复核 —— 便宜的检查永远先跑</text>
+
+  <text x="40" y="1160" font-size="11" fill="#6e7a87">图例：</text>
+  <line x1="96" y1="1156" x2="128" y2="1156" stroke="#a371f7" stroke-width="2" marker-end="url(#arrP)"/>
+  <text x="136" y="1160" font-size="11" fill="#8b949e">fork 派生</text>
+  <line x1="212" y1="1156" x2="244" y2="1156" stroke="#58a6ff" stroke-width="2" marker-end="url(#arrB)"/>
+  <text x="252" y="1160" font-size="11" fill="#8b949e">继承/IPC 下行</text>
+  <line x1="360" y1="1156" x2="392" y2="1156" stroke="#3fb950" stroke-width="2" marker-end="url(#arrG)"/>
+  <text x="400" y="1160" font-size="11" fill="#8b949e">验收/事件上行</text>
+  <line x1="520" y1="1156" x2="552" y2="1156" stroke="#6e7a87" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="560" y="1160" font-size="11" fill="#8b949e">数据流</text>
+  <line x1="648" y1="1156" x2="680" y2="1156" stroke="#a371f7" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="688" y="1160" font-size="11" fill="#8b949e">CDP 外部驱动</text>
+</svg>

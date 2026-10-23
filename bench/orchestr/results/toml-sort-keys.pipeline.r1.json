@@ -5,15 +5,16 @@
   "run": 1,
   "commit": "65bab75",
   "goldCommit": null,
-  "chatId": "bmQgIrCWSp",
-  "agentStatus": "running",
-  "wallSec": 1201,
-  "tokens": null,
+  "chatId": "PYhdfuqpUY",
+  "agentStatus": "completed",
+  "wallSec": 431,
+  "tokens": 45366,
   "ttfgSec": null,
   "verifyOk": false,
   "integrityOk": true,
   "pass": false,
-  "finalTail": "",
+  "detail": "",
+  "finalTail": "所有 worker 失败 — 管线停止",
   "verifyTail": "PASS 默认：b = 1 在最前\r\nPASS 默认：嵌套保持插入序（d 在 c 前）\r\n",
-  "ts": "2026-10-22T08:07:52.556Z"
+  "ts": "2026-10-23T09:58:18.972Z"
 }

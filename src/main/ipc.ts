@@ -258,7 +258,17 @@ export function registerIpc(): void {
   // sweep again or they would fail live pipelines
   const sweptProjects = new Set<string>()
 
-  ipcMain.handle('occ:openProject', async (_e, rootDir: string) => {
+  // 项目开/关必须串行：并发 openProject（如开机自动恢复 lastProject 与用户/自动化
+  // 的显式 openProject 相撞）会在 registry 里交错，谁后完成谁赢，且中途读到 null。
+  let projectOpChain: Promise<unknown> = Promise.resolve()
+  const serializeProjectOp = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = projectOpChain.then(fn, fn)
+    projectOpChain = run.catch(() => undefined)
+    return run
+  }
+
+  ipcMain.handle('occ:openProject', (_e, rootDir: string) =>
+    serializeProjectOp(async () => {
     // the opencode server is only needed by the opencode engine; native runs
     // without it. A missing/broken CLI must never block opening a project.
     try {
@@ -281,11 +291,12 @@ export function registerIpc(): void {
     const project = getActiveProject()
     const graph = await getGraph(rootDir)
     return { project, graph }
-  })
+    })
+  )
 
-  ipcMain.handle('occ:closeProject', async () => {
+  ipcMain.handle('occ:closeProject', () => serializeProjectOp(async () => {
     setActiveProject(null)
-  })
+  }))
 
   ipcMain.handle('occ:getGraph', async () => {
     const p = getActiveProject()

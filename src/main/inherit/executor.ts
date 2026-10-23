@@ -1297,7 +1297,7 @@ async function runAdaptive(
     fastTried = true
     return tryFastPath(rootDir, opts.goal, taskList, cid)
   }
-  if (await tryFast([opts.goal])) {
+  if (!project0?.policy.disableFastPath && (await tryFast([opts.goal]))) {
     return
   }
 
@@ -1375,7 +1375,7 @@ async function runAdaptive(
     chat('final', '已按你的要求停止执行。', undefined, cid)
     return
   }
-  if (await tryFast(tasks)) {
+  if (!project0?.policy.disableFastPath && (await tryFast(tasks))) {
     return
   }
 
