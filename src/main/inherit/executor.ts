@@ -1265,6 +1265,9 @@ async function runAdaptive(
   const seenTaskSets = new Set<string>()
   const normTasks = (arr: string[]): string =>
     arr.map((t) => t.toLowerCase().replace(/\s+/g, ' ').replace(/[。．.！!？?，,]+$/, '')).sort().join('|')
+  // headline = the first task line, loosely normalized (state-chain §5.3:
+  // deterministic stop signals must not depend on the model's exact wording)
+  const headlineOf = (t: string): string => t.toLowerCase().replace(/\s+/g, ' ').slice(0, 160).trim()
   seenTaskSets.add(normTasks(tasks))
   let frontier = opts.parentId
   const shape = shapeKey(goalText)
@@ -1381,6 +1384,10 @@ async function runAdaptive(
 
   let spent = 0
   let lastPerWorker = 0
+  // repeat-round gate state: previous round's fitness + the headline the
+  // previous round actually dispatched (measured post-green burn: 82%)
+  let prevFitness = -1
+  let lastHeadline = ''
 
   for (let round = 1; round <= maxRounds; round++) {
     // stop pressed while planning / between rounds → land the stop as final
@@ -1515,6 +1522,9 @@ async function runAdaptive(
 
     await waitTerminal(rootDir, childIds, 10 * 60 * 1000)
 
+    // gate bookkeeping: what this round actually dispatched
+    lastHeadline = tasks.length > 0 ? headlineOf(tasks[0]) : ''
+
     const graph = await getGraph(rootDir)
     const finished: NodeID[] = []
     const tails = new Map<NodeID, string>()
@@ -1531,8 +1541,38 @@ async function runAdaptive(
     spent += roundTokens
     if (finished.length > 0) lastPerWorker = Math.round(roundTokens / finished.length)
     if (finished.length === 0) {
+      // Slow ≠ dead (stop-condition family, the mirror of the 82% finding:
+      // that one burned post-green, this one killed healthy workers).
+      // waitTerminal timing out now is NOT proof of failure — a deepseek
+      // worker can legitimately spend >10min on a multi-step repair. Check
+      // the evidence store (node status = projection of live sessions) and
+      // grant up to 2 x 8min of grace before declaring a worker wipe.
+      for (let grace = 1; grace <= 2; grace++) {
+        const g2 = await getGraph(rootDir)
+        const alive = childIds.some((id) => g2.nodes[id]?.status === 'running')
+        if (!alive) break
+        chat('manager', `⏳ worker 仍在活跃工作（宽限 ${grace}/2，再等 ≤8 分钟）——按节点状态判断，不用定时器误杀`, undefined, cid)
+        decide(rootDir, 'worker-grace', `active workers past waitTerminal timeout — grace ${grace}/2`, cid)
+        await waitTerminal(rootDir, childIds, 8 * 60 * 1000)
+      }
+      const g4 = await getGraph(rootDir)
+      finished.length = 0
+      tails.clear()
+      roundTokens = 0
+      for (const id of childIds) {
+        const n = g4.nodes[id]
+        if (!n) continue
+        roundTokens += (n.tokenUsage?.input ?? 0) + (n.tokenUsage?.output ?? 0)
+        if (n.status === 'completed' || n.status === 'frozen' || n.status === 'archived') finished.push(id)
+        const tail = (await lastAssistantText(rootDir, n)).slice(0, 500)
+        tails.set(id, tail)
+      }
+      spent += roundTokens
+      if (finished.length > 0) lastPerWorker = Math.round(roundTokens / finished.length)
+    }
+    if (finished.length === 0) {
       const rateLimited = childIds.some((id) => {
-        const n = graph.nodes[id]
+        const n = g4?.nodes[id] ?? graph.nodes[id]
         return !!n?.error && /429|上限|quota|rate.?limit/i.test(n.error)
       })
       chat(
@@ -1814,6 +1854,7 @@ async function runAdaptive(
           tasks = lines2.slice(0, 1).length > 0 ? [lines2.slice(0, 1)[0] || `继续完成目标：${goalText}`] : [`继续完成目标：${goalText}`]
           baseId = eval2.node.id
           applied = 0
+          prevFitness = fitness
           continue
         }
         text = text2 // confirmed — carry the cross-checked verdict forward
@@ -1881,8 +1922,47 @@ async function runAdaptive(
       chat('final', (answer || 'worker 报告目标已完成。') + '（重复任务 — 已收敛）', evaluation.node.id, cid)
       return
     }
+    // repeat-round gate (确定性 stop-condition): the evaluator circling the
+    // SAME objective round after round is how 82% of a passing pipeline's
+    // tokens burned post-green (3.38M of 4.17M on one schedule-jitter task).
+    // If the repair list re-issues the same HEADLINE as the round we just ran
+    // AND fitness did not improve, stop re-dispatching — stop-conditions are
+    // the judge, not the model's optimism.
+    if (next.length > 0 && lastHeadline && headlineOf(next[0]) === lastHeadline && fitness <= prevFitness) {
+      const answer = text.replace(/VERDICT:\s*\w+/i, '').trim()
+      decide(
+        rootDir,
+        'repeat-gate',
+        `evaluator re-issued the same headline twice with fitness ${fitness.toFixed(2)} (prev ${prevFitness < 0 ? 'n/a' : prevFitness.toFixed(2)}) — stopping instead of re-dispatching`,
+        cid
+      )
+      chat(
+        'final',
+        (answer || '验收员判定仍未达标。') +
+          '\n\n（重复轮闸门：验收员连续两轮指派同一目标且 fitness 无提升——按确定性判据停止重派。给出新的具体指令即可续跑。）',
+        evaluation.node.id,
+        cid
+      )
+      await saveFrontier(rootDir, cid, frontier)
+      saveRoutingOutcome(rootDir, {
+        chatId: cid,
+        shape,
+        tasks: firstTasks(),
+        rounds: round,
+        criteria: planCriteria,
+        outcome: 'failed',
+        tokens: spent,
+        wallSec: Math.round((Date.now() - pipelineStart) / 1000),
+        verified: false,
+        verifyCaught: true,
+        fitness
+      })
+      roundsUsed = round
+      return
+    }
     tasks = next.length ? next : [goalText]
     seenTaskSets.add(normTasks(tasks))
+    prevFitness = fitness
     baseId = evaluation.node.id // inheritance chain grows through the review node
   }
 }

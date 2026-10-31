@@ -7,6 +7,7 @@
 > 4. 修复：runner v3 = 每任务专属应用实例 + openProject 根目录断言 + 残留 chat 必中止。重跑结果见下表 v3 标记。
 > 5. v3 收官（2026-10-23）：tabulate-sort 干净重跑**不复现** v1 批次的通过（判据 FAIL：帮助文本缺 `--sort`、`python -m tabulate` 无 `__main__`，源码零改动）。n=1 无法归因（批次条件 / 运行方差 / runner 变更三者皆有嫌疑）——编排臂合计由 2/8 修正为 **1/8**，比通过宣称更早自行登出。
 > 6. 配对 bug 修复 + 混杂变量澄清（2026-10-23）：取证发现 sort/jitter 两例干净重跑的 worker 全部死于**同一代码缺陷**——`compactHistory` 把工作记忆笔记插进了 assistant(tool_calls) 与其 tool 结果之间，deepseek 以 HTTP 400 拒成消息对（`src/main/agent/loop.ts` 已修复，tsc + 重跑验证通过）。同时确认混杂：`disableFastPath` 标记是 41bba25 才生效的，v1/v2 试点写入的 `disableFastPath:true` 被旧代码静默忽略（当时快路径实际开着）。修复后 schedule-jitter 干净重跑 **PASS 复现**（v1 唯一幸存通过）。⚠ 本表中 sort/encoding/transpose/toml/tablib 五行 v3 数值的 worker 同样中途死于该 bug——判据失败本身可信（验收独立判 FAIL），但 worker 消耗的 tokens 是被 bug 截断的，修复后的完整成本尺度见发现 5 的 4.17M 一行。
+> 7. stop-condition 修复落地 + 事件日志整合（2026-10-23 晚）：按发现 5 上线三件——**verify 短路**（独立验收脚本两次确认绿 → runner 中止管线收官）、**repeat 轮闸门**（验收员连续两轮同 headline 且 fitness 无提升 → 停止重派）、**waitTerminal 宽限**（worker 慢 ≠ 死——超时按节点状态再判，不打定时器误杀；smoke 实测救活一个 17 分钟慢 worker）+ 状态链整合（逐 step append-only 事件日志 `events.jsonl`、压实改投影视图——canonical 原件零改写实测 0 污染标记）。smoke n=3 无 PASS（schedule-jitter r2 截断、toml r1 20 分钟预算内未完成——预算纪律内诚实失败），**本表 runner8 之前的历史数字不变**；「verify 短路/repeat 闸门」代码就位但尚无全判据绿的真实触发样本，预期单任务成本 <<4.17M 待实测为准。
 
 - 日期：2026-10-22
 - 模型：deepseek-chat（两臂同一模型、同一 key）

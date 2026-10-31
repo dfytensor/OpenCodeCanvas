@@ -133,14 +133,26 @@ async function runTask(task, runIdx) {
     )
     console.log(`[${task.id} run${runIdx}] openProject call:`, opened)
     let openInfo = { ok: false, root: '', err: '' }
-    for (let i = 0; i < 16; i++) {
-      await sleep(750)
-      const cur = await jget(
-        `JSON.stringify({ root: window.__occStore.getState().project?.rootDir ?? null, err: window.__occStore.getState().error ?? null })`
-      )
-      try { openInfo = JSON.parse(cur || '') } catch { /* retry */ }
-      if (String(openInfo.root || '').toLowerCase().endsWith(task.id.toLowerCase())) { openInfo.ok = true; break }
-      if (openInfo.err) break
+    // boot auto-restore races the explicit openProject: the restore is queued
+    // first and can pin rootDir to the LAST session's workspace. Assert, then
+    // one rescue re-issue before declaring a mismatch (two deterministic wins
+    // observed when switching tasks; same-task runs mask this).
+    for (let retry = 0; retry < 2 && !openInfo.ok; retry++) {
+      if (retry > 0) {
+        await jget(
+          `(async () => { try { await window.__occStore.getState().openProject(${JSON.stringify(wsp)}); return 'ok' } catch (e) { return 'ERR' } })()`,
+          true
+        )
+      }
+      for (let i = 0; i < 16; i++) {
+        await sleep(750)
+        const cur = await jget(
+          `JSON.stringify({ root: window.__occStore.getState().project?.rootDir ?? null, err: window.__occStore.getState().error ?? null })`
+        )
+        try { openInfo = JSON.parse(cur || '') } catch { /* retry */ }
+        if (String(openInfo.root || '').toLowerCase().endsWith(task.id.toLowerCase())) { openInfo.ok = true; break }
+        if (openInfo.err) break
+      }
     }
     const rootOk = !!openInfo.ok
     console.log(`[${task.id} run${runIdx}] lock ok=${rootOk} root=${String(openInfo.root).slice(-42)} err=${String(openInfo.err).slice(0, 80)}`)
@@ -182,6 +194,8 @@ async function runTask(task, runIdx) {
     let status = ''
     let finalText = ''
     let ttfg = null
+    let greenAt = null // elapsed when the first green was recorded
+    let shortCircuited = false
     let lastVerify = 0
     let lostStreak = 0
     const deadline = t0 + TIMEOUT_MIN * 60_000
@@ -211,8 +225,32 @@ async function runTask(task, runIdx) {
       if (ttfg === null && (elapsed > 300 || status === 'completed') && elapsed - lastVerify > 240) {
         lastVerify = elapsed
         const vr = verifyRun(task, wsp)
-        if (vr.ok) ttfg = Math.round(elapsed)
+        if (vr.ok) {
+          ttfg = Math.round(elapsed)
+          greenAt = elapsed
+          console.log(`[${task.id} run${runIdx}] verify GREEN (independent judge) — ttfg=${ttfg}s`)
+        }
         if (status === 'completed' && vr.ok) break
+      }
+      // verify short-circuit (state-chain §5.3: the DETERMINISTIC judge decides,
+      // not the orchestrator's model-mood fitness): a first green re-confirmed
+      // after a settle window means the goal already holds — abort the pipeline
+      // and collect. This is where the 82% post-green burn (4.17M-token pass)
+      // used to happen; the independent script now closes the loop.
+      if (ttfg !== null && !shortCircuited && status === 'running' && elapsed - greenAt >= 45) {
+        const vr2 = verifyRun(task, wsp)
+        if (vr2.ok) {
+          shortCircuited = true
+          console.log(`[${task.id} run${runIdx}] verify re-GREEN after settle — abort pipeline (stop-condition short-circuit)`)
+          try { await jget(`window.electronAPI.occ.abortNode('${chatId}').then(() => 'ok').catch(() => 'x')`, true) } catch { /* */ }
+          await sleep(1000)
+          break
+        } else {
+          // green didn't hold — require a fresh first-green
+          ttfg = null
+          greenAt = null
+          lastVerify = elapsed
+        }
       }
       if (status === 'failed') break
       if (status === 'completed') break
@@ -237,7 +275,7 @@ async function runTask(task, runIdx) {
     const baseRef = task.goldCommit ?? 'HEAD'
     const integ = spawnSync('git', ['diff', '--exit-code', baseRef, '--', ...(task.integrity ?? [])], { cwd: wsp, encoding: 'utf8' })
     const integrityOk = integ.status === 0
-    return { chatId, status, wallSec, finalText, tokens, ttfg, verifyOk: fin.ok, integrityOk, verifyTail: fin.tail }
+    return { chatId, status, shortCircuited, wallSec, finalText, tokens, ttfg, verifyOk: fin.ok, integrityOk, verifyTail: fin.tail }
   } finally {
     close()
   }
@@ -264,6 +302,7 @@ for (const task of tasks) {
       goldCommit: task.goldCommit ?? null,
       chatId: res.chatId ?? '',
       agentStatus: res.status,
+      stoppedByVerifyShortCircuit: res.shortCircuited ?? false,
       wallSec: res.wallSec ?? 0,
       tokens: res.tokens ?? null,
       ttfgSec: res.ttfg ?? null,

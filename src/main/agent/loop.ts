@@ -22,7 +22,26 @@ export interface LoopCallbacks {
   onEvent: (e: LoopEvent) => void
   /** per-step usage so callers can meter tokens even on timeout */
   onUsage?: (u: { promptTokens: number; completionTokens: number }) => void
+  /** state-chain evidence log: full per-step events for append-only persistence.
+   *  Durable replay source — carries FULL contents by design (unlike onEvent). */
+  onLog?: (e: StepLogEvent) => void
   shouldAbort?: () => boolean
+}
+
+export interface StepLogEvent {
+  kind: 'assistant' | 'tool' | 'compaction'
+  step?: number
+  /** full assistant message (content + tool_calls) — for kind 'assistant' */
+  message?: AgentMessage
+  /** for kind 'tool' */
+  tool?: string
+  toolCallId?: string
+  /** capped tool result exactly as stored in-canonical */
+  content?: string
+  /** for kind 'compaction': how many tool results the projection stubbed */
+  stubbed?: number
+  viewChars?: number
+  totalChars?: number
 }
 
 interface FetchLike {
@@ -474,16 +493,26 @@ export async function runAgentLoop(opts: {
     steps++
     opts.callbacks.onEvent({ type: 'step', text: String(steps) })
 
-    // context governance: stub old tool results once the transcript bloats —
-    // full原文 stays on disk (agent.jsonl), the context keeps short references
-    compactHistory(messages, opts.scratchpadPath)
+    // context governance: the REQUEST view stubs old tool results fresh at
+    // every step — the canonical transcript below only ever grows by appends
+    // (state-chain: history immutable, view = projection)
+    const proj = projectForProvider(messages, opts.scratchpadPath)
+    if (proj.compacted > 0) {
+      opts.callbacks.onLog?.({
+        kind: 'compaction',
+        step: steps,
+        stubbed: proj.compacted,
+        viewChars: proj.viewChars,
+        totalChars: proj.totalChars
+      })
+    }
 
     let res: ChatResponse
     try {
       res = await chatCompletion(
         opts.provider,
         opts.model,
-        messages,
+        proj.view,
         opts.tools.defs,
         opts.signal ?? new AbortController().signal,
         opts.onStream
@@ -505,7 +534,9 @@ export async function runAgentLoop(opts: {
     }
 
     // push the assistant message verbatim (content + tool_calls)
-    messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls })
+    const assistantMsg: AgentMessage = { role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls }
+    messages.push(assistantMsg)
+    opts.callbacks.onLog?.({ kind: 'assistant', step: steps, message: assistantMsg })
 
     if (msg.content) {
       finalText = msg.content
@@ -527,7 +558,9 @@ export async function runAgentLoop(opts: {
         result = `tool error: ${String(e)}`
       }
       opts.callbacks.onEvent({ type: 'tool_result', tool: call.function.name })
-      messages.push({ role: 'tool', tool_call_id: call.id, content: capToolResult(result) })
+      const toolMsg: AgentMessage = { role: 'tool', tool_call_id: call.id, content: capToolResult(result) }
+      messages.push(toolMsg)
+      opts.callbacks.onLog?.({ kind: 'tool', step: steps, tool: call.function.name, toolCallId: call.id, content: toolMsg.content })
     }
   }
 
@@ -559,38 +592,48 @@ function estChars(messages: AgentMessage[]): number {
   return n
 }
 
-/** stub the tool results of older steps into short references; structure
- *  (assistant tool_calls + tool pairs) stays intact so the transcript remains
- *  API-valid. Idempotent — stubs are short and never re-stubbed. */
-function compactHistory(messages: AgentMessage[], scratchpadPath?: string): void {
-  if (estChars(messages) < COMPACT_THRESHOLD_CHARS && messages.length < COMPACT_THRESHOLD_STEPS) return
+/** State-chain compaction: the canonical transcript is IMMUTABLE — what the
+ *  provider sees is a PROJECTION built fresh at request time. Stubbing old
+ *  tool results and re-injecting the working-memory note happen in the
+ *  projected view only; nothing here mutates `messages`. This kills the
+ *  compaction-rewrite bug class by construction (the tool-pairing split that
+ *  used to hard-kill strict-provider workers can no longer be baked into the
+ *  canonical transcript either). Pure function. */
+export function projectForProvider(
+  messages: AgentMessage[],
+  scratchpadPath?: string
+): { view: AgentMessage[]; compacted: number; viewChars: number; totalChars: number } {
+  const totalChars = estChars(messages)
+  if (totalChars < COMPACT_THRESHOLD_CHARS && messages.length < COMPACT_THRESHOLD_STEPS) {
+    return { view: messages, compacted: 0, viewChars: totalChars, totalChars }
+  }
   const stop = Math.max(2, messages.length - KEEP_RECENT)
+  const view = messages.slice()
   let compacted = 0
   for (let i = 2; i < stop; i++) {
-    const m = messages[i]
+    const m = view[i]
     if (m.role === 'tool' && (m.content?.length ?? 0) > 300) {
       const first = (m.content ?? '').slice(0, 240).replace(/\s+/g, ' ')
-      messages[i] = { ...m, content: `[已压实] ${first}…（原文已落盘 agent.jsonl，需要全文请用工具重读）` }
+      view[i] = { ...m, content: `[已压实] ${first}…（原文永远在 events.jsonl / agent.jsonl，需要全文请用工具重读）` }
       compacted++
     }
   }
   if (compacted > 0) {
     // re-injection must never land between an assistant(tool_calls) turn and
     // its tool responses — strict providers (deepseek 等) reject the pairing
-    // with HTTP 400 "insufficient tool messages following tool_calls" and the
-    // worker dies mid-flight. Tool results of one assistant turn are stored
-    // contiguously right after it, so advance the insertion point past any
-    // unclosed pair at the boundary.
+    // with HTTP 400 "insufficient tool messages following tool_calls". Tool
+    // results of one assistant turn sit contiguously right after it, so the
+    // insertion point advances past any unclosed pair at the boundary.
     let at = stop
-    while (at < messages.length) {
-      const m = messages[at]
+    while (at < view.length) {
+      const m = view[at]
       if (m.role === 'tool') {
         at++
         continue
       }
       if (m.role === 'assistant' && (m.tool_calls?.length ?? 0) > 0) {
         at++
-        while (at < messages.length && messages[at].role === 'tool') at++
+        while (at < view.length && view[at].role === 'tool') at++
         continue
       }
       break
@@ -606,10 +649,10 @@ function compactHistory(messages: AgentMessage[], scratchpadPath?: string): void
             role: 'user',
             content: `[工作记忆恢复] 对话早段已被压实。你的工作笔记（notes.md）当前内容：\n${note}\n（以此为准继续；笔记过时请先更新它）`
           }
-          messages.splice(at, 0, reinject)
+          view.splice(at, 0, reinject)
         }
       } catch { /* no notes yet — fine */ }
     }
-    trace(`compactHistory: stubbed ${compacted} tool results, re-inject at ${at}/${messages.length}, chars ${estChars(messages)}`)
   }
+  return { view, compacted, viewChars: estChars(view), totalChars }
 }

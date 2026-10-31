@@ -14,6 +14,7 @@ import { listAgentProviders, resolveAgentModel, resolveAgentModelChain, type Age
 import { buildTools, systemPrompt, type Tool } from './tools'
 import { jevEnabled, jevToolSafe } from './jev'
 import { runAgentLoop, type AgentMessage } from './loop'
+import { appendAgentEvent } from './events'
 
 interface AgentSession {
   id: string
@@ -215,6 +216,10 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
       callbacks: {
         onUsage: (u) => {
           // meter per-step so costs are visible even if the turn times out
+          void appendAgentEvent(rootDir, session.nodeId, 'usage', {
+            promptTokens: u.promptTokens,
+            completionTokens: u.completionTokens
+          })
           void (async () => {
             try {
               const g = await getGraph(rootDir)
@@ -239,6 +244,31 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
             chat('worker', `✗ ${session.title}: ${e.text?.slice(0, 300)}`, session.nodeId, session.chatId)
           }
         },
+        onLog: (e) => {
+          // state-chain evidence: full per-step events, appended as they happen
+          // (survives crashes mid-turn — persist-at-turn-end lost whole turns)
+          if (e.kind === 'assistant') {
+            void appendAgentEvent(rootDir, session.nodeId, 'msg', {
+              role: 'assistant',
+              content: e.message?.content ?? '',
+              toolCalls: e.message?.tool_calls
+            })
+          } else if (e.kind === 'tool') {
+            void appendAgentEvent(rootDir, session.nodeId, 'msg', {
+              role: 'tool',
+              tool: e.tool,
+              toolCallId: e.toolCallId,
+              content: e.content ?? ''
+            })
+          } else if (e.kind === 'compaction') {
+            void appendAgentEvent(rootDir, session.nodeId, 'compaction', {
+              step: e.step,
+              stubbed: e.stubbed,
+              viewChars: e.viewChars,
+              totalChars: e.totalChars
+            })
+          }
+        },
         shouldAbort: () => session.aborted
       }
         })
@@ -256,6 +286,12 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
     session.providerRef = usedRef
     session.messages = result.messages
     await persist(session)
+    void appendAgentEvent(rootDir, session.nodeId, 'turn', {
+      status: result.aborted ? 'aborted' : 'completed',
+      steps: result.steps,
+      promptTokens: result.usage.promptTokens,
+      completionTokens: result.usage.completionTokens
+    })
 
     if (result.aborted) {
       await transitionNode(rootDir, session.nodeId, 'aborted').catch(() => undefined)
@@ -274,6 +310,10 @@ async function runTurn(session: AgentSession, rootDir: string): Promise<void> {
       chat('worker', `✓ ${session.title} 完成（${result.steps} 步，输出 ${result.usage.completionTokens} tokens）`, session.nodeId, session.chatId)
     }
   } catch (e) {
+    void appendAgentEvent(rootDir, session.nodeId, 'turn', {
+      status: session.aborted ? 'aborted' : 'failed',
+      error: String(e).slice(0, 300)
+    })
     await patchNode(rootDir, session.nodeId, {
       status: session.aborted ? 'aborted' : 'failed',
       error: String(e).slice(0, 300)
@@ -319,14 +359,21 @@ export async function startAgentSession(
   }
   session.messages.push({ role: 'system', content: systemPrompt(workDir) })
   if (opts.seed?.length) session.messages.push(...opts.seed)
-  session.messages.push({
-    role: 'user',
-    content: opts.kickoff || 'Review the workspace and make progress on the goal described above.'
-  })
+  const kickoff = opts.kickoff || 'Review the workspace and make progress on the goal described above.'
+  session.messages.push({ role: 'user', content: kickoff })
 
   sessions.set(session.id, session)
   gcSessions()
   await patchNode(rootDir, node.id, { sessionId: session.id, channel: 'brief' }).catch(() => undefined)
+  // state-chain evidence: session start + kickoff, then every step goes to
+  // events.jsonl (append-only) via the loop's onLog
+  void appendAgentEvent(rootDir, node.id, 'session', {
+    sessionId: session.id,
+    providerRef: session.providerRef,
+    workDir,
+    seedCount: opts.seed?.length ?? 0
+  })
+  void appendAgentEvent(rootDir, node.id, 'msg', { role: 'user', content: kickoff })
   chat('worker', `▸ ${node.title} [${session.providerRef}] 启动`, node.id, session.chatId)
   await persist(session)
 
@@ -365,6 +412,7 @@ export async function agentSend(rootDir: string, nodeId: NodeID, message: string
   if (session.busy) throw new GraphError('ILLEGAL_TRANSITION', 'agent is still working — wait or abort first')
   if (session.aborted) throw new GraphError('ILLEGAL_TRANSITION', 'agent session was aborted')
   session.messages.push({ role: 'user', content: message })
+  void appendAgentEvent(rootDir, session.nodeId, 'msg', { role: 'user', content: message })
   await persist(session)
   void runTurn(session, rootDir)
 }
